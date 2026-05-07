@@ -1267,6 +1267,32 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         if not self.git.is_git_repo():
             wx.MessageBox("Initialize a Git repo first.", "KiGit", wx.OK | wx.ICON_WARNING)
             return
+
+        if not self.git.has_commits():
+            wx.MessageBox(
+                "No commits exist yet.\n\nCreate your first commit (Commit tab) before pushing.",
+                "KiGit",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+
+        try:
+            branch = self.git.current_branch()
+        except Exception:
+            branch = ""
+        if branch == "master":
+            resp0 = wx.MessageBox(
+                "Your current branch is 'master'.\n\nKiGit prefers using 'main'. Rename 'master' to 'main' now?",
+                "KiGit",
+                wx.YES_NO | wx.YES_DEFAULT | wx.ICON_QUESTION,
+            )
+            if resp0 == wx.YES:
+                try:
+                    self.git.rename_current_branch("main")
+                    self._log("Renamed branch: master -> main")
+                except Exception as exc:
+                    wx.MessageBox(f"Rename failed:\n{exc}", "KiGit Error", wx.OK | wx.ICON_ERROR)
+                    return
         
         remote = self.txt_remote_url.GetValue().strip()
         if not remote:

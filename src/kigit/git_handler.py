@@ -83,8 +83,22 @@ class GitHandler:
     def repo_root(self) -> str:
         return self._repo_cwd()
 
-    def init(self) -> None:
-        self._run(["init"], cwd=self.project_dir)
+    def init(self, default_branch: str = "main") -> None:
+        """
+        Initializes a repository using `default_branch` when possible.
+        This avoids creating `master` by default on fresh projects.
+        """
+        default_branch = (default_branch or "").strip() or "main"
+        try:
+            # Git 2.28+: supports `git init -b <name>`
+            self._run(["init", "-b", default_branch], cwd=self.project_dir)
+        except GitError:
+            self._run(["init"], cwd=self.project_dir)
+            # Best-effort: rename current branch to default_branch.
+            try:
+                self._run(["checkout", "-B", default_branch], cwd=self.project_dir)
+            except GitError:
+                pass
         self._repo_root_cache = self.project_dir
 
     def status_porcelain(self) -> str:
@@ -238,6 +252,14 @@ class GitHandler:
         if not name:
             raise GitError("Branch name is empty")
         self._run(["checkout", name], cwd=self._repo_cwd())
+
+    def rename_current_branch(self, new_name: str) -> str:
+        new_name = (new_name or "").strip()
+        if not new_name:
+            raise GitError("New branch name is empty")
+        # `git branch -M <name>` renames the current branch (or creates it when unborn).
+        self._run(["branch", "-M", new_name], cwd=self._repo_cwd())
+        return new_name
 
     def ensure_gitignore(self, template_text: str) -> bool:
         """

@@ -27,7 +27,7 @@
   "tags": ["git", "version-control", "automation", "kicad-cli"],
   "versions": [
     {
-      "version": "0.4.10",
+      "version": "0.4.11",
       "status": "stable",
       "kicad_version": "8.0",
       "kicad_version_max": "10.99",
