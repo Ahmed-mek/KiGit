@@ -7,9 +7,10 @@ from pathlib import Path
 
 def _in_kicad() -> bool:
     try:
-        import pcbnew  # noqa: F401
+        import pcbnew  # type: ignore
 
-        return True
+        pgm = getattr(pcbnew, "PgmOrNull", None)
+        return bool(pgm and pgm() is not None)
     except Exception:
         return False
 
@@ -73,6 +74,9 @@ if _in_kicad():
                     "KiGit",
                     wx.OK | wx.ICON_ERROR,
                 )
+
+    # Register at import-time inside KiCad.
+    KiGitAction().register()
 
 else:
 

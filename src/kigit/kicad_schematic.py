@@ -37,6 +37,50 @@ def _find_matching_paren(text: str, start_idx: int) -> int:
     return -1
 
 
+from typing import Optional
+
+
+def _extract_field(block: str, key: str) -> Optional[str]:
+    import re
+
+    m = re.search(rf'\(\s*{re.escape(key)}\s+"([^"]*)"\s*\)', block)
+    if not m:
+        return None
+    return m.group(1)
+
+
+def _extract_comments(block: str) -> dict[int, str]:
+    import re
+
+    out: dict[int, str] = {}
+    for m in re.finditer(r'\(\s*comment\s+(\d+)\s+"([^"]*)"\s*\)', block):
+        try:
+            idx = int(m.group(1))
+        except Exception:
+            continue
+        if 1 <= idx <= 9:
+            out[idx] = m.group(2)
+    return out
+
+
+def _canonical_title_block(*, title: str, date: str, rev: str, company: str, comments: dict[int, str]) -> str:
+    def c(i: int) -> str:
+        return comments.get(i, "")
+
+    return (
+        "  (title_block\n"
+        f'    (title "{title}")\n'
+        f'    (date "{date}")\n'
+        f'    (rev "{rev}")\n'
+        f'    (company "{company}")\n'
+        f'    (comment 1 "{c(1)}")\n'
+        f'    (comment 2 "{c(2)}")\n'
+        f'    (comment 3 "{c(3)}")\n'
+        f'    (comment 4 "{c(4)}")\n'
+        "  )\n"
+    )
+
+
 def set_title_block_revision(schematic_file: str, revision: str) -> bool:
     """
     Updates the schematic title block (rev field) in a *.kicad_sch file.
@@ -54,10 +98,20 @@ def set_title_block_revision(schematic_file: str, revision: str) -> bool:
 
     start = text.find("(title_block")
     if start < 0:
-        # Insert a minimal title_block after the first line (usually `(kicad_sch ...)`)
-        nl = text.find("\n")
-        insert_at = nl + 1 if nl >= 0 else len(text)
-        block = f'  (title_block (rev "{rev}"))\n'
+        # Insert a canonical title_block near the header, ideally after (paper ...).
+        insert_at = -1
+        for anchor in ("(paper", "(uuid", "(generator_version", "(generator", "(version"):
+            pos = text.find(anchor)
+            if pos >= 0:
+                # Insert right after the end of that S-expression line.
+                nl = text.find("\n", pos)
+                insert_at = nl + 1 if nl >= 0 else len(text)
+                break
+        if insert_at < 0:
+            nl = text.find("\n")
+            insert_at = nl + 1 if nl >= 0 else len(text)
+
+        block = _canonical_title_block(title="", date="", rev=rev, company="", comments={})
         new_text = text[:insert_at] + block + text[insert_at:]
         if new_text != text:
             path.write_text(new_text, encoding="utf-8")
@@ -74,14 +128,12 @@ def set_title_block_revision(schematic_file: str, revision: str) -> bool:
 
     block = text[open_paren : end + 1]
 
-    # Replace existing (rev "...") if present, else insert one right after title_block.
-    import re
-
-    if re.search(r'\(\s*rev\s+"[^"]*"\s*\)', block):
-        new_block = re.sub(r'\(\s*rev\s+"[^"]*"\s*\)', f'(rev "{rev}")', block, count=1)
-    else:
-        # Insert after "(title_block"
-        new_block = re.sub(r"\(title_block\b", f'(title_block (rev "{rev}")', block, count=1)
+    # Rewrite the full title_block in a canonical multi-line format to satisfy KiCad's parser.
+    title = _extract_field(block, "title") or ""
+    date = _extract_field(block, "date") or ""
+    company = _extract_field(block, "company") or ""
+    comments = _extract_comments(block)
+    new_block = _canonical_title_block(title=title, date=date, rev=rev, company=company, comments=comments).rstrip("\n")
 
     if new_block == block:
         return False
@@ -89,4 +141,3 @@ def set_title_block_revision(schematic_file: str, revision: str) -> bool:
     new_text = text[:open_paren] + new_block + text[end + 1 :]
     path.write_text(new_text, encoding="utf-8")
     return True
-
