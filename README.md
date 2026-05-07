@@ -24,7 +24,7 @@ KiGit is a KiCad Python plugin (SWIG `pcbnew.ActionPlugin`) that integrates Git 
 
 ```bash
 python3 -m py_compile src/kigit/*.py
-python3 scripts/build_pcm_zip.py --version 0.4.9
+python3 scripts/build_pcm_zip.py --version 0.4.10
 ```
 
 The ZIP artifact is written to `dist/`.
@@ -34,7 +34,7 @@ The ZIP artifact is written to `dist/`.
 If you want rapid iteration without re-installing the ZIP each time, create a symlink from KiCad’s PCM plugin folder to the staged plugin files:
 
 ```bash
-python3 scripts/build_pcm_zip.py --version 0.4.9
+python3 scripts/build_pcm_zip.py --version 0.4.10
 bash scripts/install_kicad_dev_link.sh
 ```
 
