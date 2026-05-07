@@ -1,6 +1,6 @@
 [project]
 name = "kigit"
-version = "0.4.11"
+version = "0.4.12"
 description = "KiCad plugin scaffold for Git workflows"
 requires-python = ">=3.8"
 

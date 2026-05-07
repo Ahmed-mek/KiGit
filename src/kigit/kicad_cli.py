@@ -64,7 +64,8 @@ class KiCadCli:
         )
         if res.returncode != 0 and not allow_nonzero:
             msg = res.stderr.strip() or res.stdout.strip() or f"kicad-cli failed ({res.returncode})"
-            raise KiCadCliError(msg)
+            cmd = " ".join(argv)
+            raise KiCadCliError(f"{msg}\n\nCommand: {cmd}\nCWD: {run_cwd}")
         return res
 
     def export_project_artifacts(self, project_dir: str) -> None:
@@ -152,9 +153,17 @@ class KiCadCli:
                 return "schematic"
 
         if schematic_file and export_pdf:
-            self.export_schematic_pdf(schematic_file, str(sch_dir / f"{_sch_stem()}_schematic{_rev_suffix()}.pdf"))
+            self.export_schematic_pdf(
+                schematic_file,
+                str(sch_dir / f"{_sch_stem()}_schematic{_rev_suffix()}.pdf"),
+                cwd=project_dir,
+            )
         if schematic_file and export_bom:
-            self.export_bom_csv(schematic_file, str(sch_dir / f"{_sch_stem()}_bom{_rev_suffix()}.csv"))
+            self.export_bom_csv(
+                schematic_file,
+                str(sch_dir / f"{_sch_stem()}_bom{_rev_suffix()}.csv"),
+                cwd=project_dir,
+            )
 
         if board_file:
             # Prep for Phase 3 (visual diff): plot key layers to SVG.
@@ -163,20 +172,31 @@ class KiCadCli:
                     board_file,
                     str(pcb_dir / f"layers_svg{_rev_suffix()}"),
                     layers=["F.Cu", "B.Cu", "F.SilkS", "B.SilkS", "Edge.Cuts"],
+                    cwd=project_dir,
                 )
 
             # Phase 2 requested outputs: Gerbers + drill + a quick visual render.
             if export_gerbers:
-                self.export_gerbers(board_file, str(mfg_dir / f"gerbers{_rev_suffix()}"))
+                self.export_gerbers(board_file, str(mfg_dir / f"gerbers{_rev_suffix()}"), cwd=project_dir)
             if export_drill:
-                self.export_drill(board_file, str(mfg_dir / f"drill{_rev_suffix()}"))
+                self.export_drill(board_file, str(mfg_dir / f"drill{_rev_suffix()}"), cwd=project_dir)
             if export_images:
-                self.render_pcb_image(board_file, str(pcb_dir / f"{_board_stem()}_top{_rev_suffix()}.png"), side="top")
-                self.render_pcb_image(board_file, str(pcb_dir / f"{_board_stem()}_bottom{_rev_suffix()}.png"), side="bottom")
+                self.render_pcb_image(
+                    board_file,
+                    str(pcb_dir / f"{_board_stem()}_top{_rev_suffix()}.png"),
+                    side="top",
+                    cwd=project_dir,
+                )
+                self.render_pcb_image(
+                    board_file,
+                    str(pcb_dir / f"{_board_stem()}_bottom{_rev_suffix()}.png"),
+                    side="bottom",
+                    cwd=project_dir,
+                )
             if export_step:
-                self.export_step(board_file, str(three_d_dir / f"{_board_stem()}{_rev_suffix()}.step"))
+                self.export_step(board_file, str(three_d_dir / f"{_board_stem()}{_rev_suffix()}.step"), cwd=project_dir)
             if export_glb:
-                self.export_glb(board_file, str(three_d_dir / f"{_board_stem()}{_rev_suffix()}.glb"))
+                self.export_glb(board_file, str(three_d_dir / f"{_board_stem()}{_rev_suffix()}.glb"), cwd=project_dir)
 
             # Convenience: create a fab ZIP containing gerbers + drill (when present).
             try:
@@ -191,24 +211,24 @@ class KiCadCli:
             except Exception:
                 pass
 
-    def export_schematic_pdf(self, schematic_file: str, out_pdf: str) -> None:
-        self._run(["sch", "export", "pdf", "--output", out_pdf, schematic_file])
+    def export_schematic_pdf(self, schematic_file: str, out_pdf: str, *, cwd: Optional[str] = None) -> None:
+        self._run(["sch", "export", "pdf", "--output", out_pdf, schematic_file], cwd=cwd)
 
-    def export_bom_csv(self, schematic_file: str, out_csv: str) -> None:
-        self._run(["sch", "export", "bom", "--output", out_csv, schematic_file])
+    def export_bom_csv(self, schematic_file: str, out_csv: str, *, cwd: Optional[str] = None) -> None:
+        self._run(["sch", "export", "bom", "--output", out_csv, schematic_file], cwd=cwd)
 
-    def export_pcb_layers_svg(self, board_file: str, out_dir: str, *, layers: list[str]) -> None:
+    def export_pcb_layers_svg(self, board_file: str, out_dir: str, *, layers: list[str], cwd: Optional[str] = None) -> None:
         layer_list = ",".join(layers)
         Path(out_dir).mkdir(parents=True, exist_ok=True)
         # Ensure output is treated as a directory (multi-file mode).
-        self._run(["pcb", "export", "svg", "--mode-multi", "--output", out_dir, "--layers", layer_list, board_file])
+        self._run(["pcb", "export", "svg", "--mode-multi", "--output", out_dir, "--layers", layer_list, board_file], cwd=cwd)
 
-    def export_gerbers(self, board_file: str, out_dir: str) -> None:
+    def export_gerbers(self, board_file: str, out_dir: str, *, cwd: Optional[str] = None) -> None:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
         # Prefer the plot settings stored in the board when available.
-        self._run(["pcb", "export", "gerbers", "--output", out_dir, "--board-plot-params", board_file])
+        self._run(["pcb", "export", "gerbers", "--output", out_dir, "--board-plot-params", board_file], cwd=cwd)
 
-    def export_drill(self, board_file: str, out_dir: str) -> None:
+    def export_drill(self, board_file: str, out_dir: str, *, cwd: Optional[str] = None) -> None:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
         # Defaults to Excellon; generate drill-map + report for convenience.
         self._run(
@@ -221,18 +241,19 @@ class KiCadCli:
                 "--generate-map",
                 "--generate-report",
                 board_file,
-            ]
+            ],
+            cwd=cwd,
         )
 
-    def export_step(self, board_file: str, out_file: str) -> None:
+    def export_step(self, board_file: str, out_file: str, *, cwd: Optional[str] = None) -> None:
         Path(out_file).parent.mkdir(parents=True, exist_ok=True)
-        self._run(["pcb", "export", "step", "--output", out_file, "--force", board_file])
+        self._run(["pcb", "export", "step", "--output", out_file, "--force", board_file], cwd=cwd)
 
-    def export_glb(self, board_file: str, out_file: str) -> None:
+    def export_glb(self, board_file: str, out_file: str, *, cwd: Optional[str] = None) -> None:
         Path(out_file).parent.mkdir(parents=True, exist_ok=True)
-        self._run(["pcb", "export", "glb", "--output", out_file, "--force", board_file])
+        self._run(["pcb", "export", "glb", "--output", out_file, "--force", board_file], cwd=cwd)
 
-    def render_pcb_image(self, board_file: str, out_file: str, *, side: str) -> None:
+    def render_pcb_image(self, board_file: str, out_file: str, *, side: str, cwd: Optional[str] = None) -> None:
         Path(out_file).parent.mkdir(parents=True, exist_ok=True)
         self._run(
             [
@@ -247,7 +268,8 @@ class KiCadCli:
                 "--height",
                 "900",
                 board_file,
-            ]
+            ],
+            cwd=cwd,
         )
 
     def run_pcb_drc_report(self, board_file: str, out_report: str) -> bool:
