@@ -75,9 +75,6 @@ if _in_kicad():
                     wx.OK | wx.ICON_ERROR,
                 )
 
-    # Register at import-time inside KiCad.
-    KiGitAction().register()
-
 else:
 
     class KiGitAction:  # noqa: D401
