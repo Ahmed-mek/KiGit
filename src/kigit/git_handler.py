@@ -144,6 +144,13 @@ class GitHandler:
         res = self._run(args, cwd=self._repo_cwd())
         return res.stdout
 
+    def get_commit_count(self) -> int:
+        try:
+            res = self._run(["rev-list", "--count", "HEAD"], cwd=self._repo_cwd())
+            return int(res.stdout.strip())
+        except GitError:
+            return 0
+
     def show_summary(self, rev: str) -> str:
         res = self._run(["show", "--no-patch", "--stat", "--decorate", rev], cwd=self._repo_cwd())
         return res.stdout
@@ -179,3 +186,54 @@ class GitHandler:
             return False
         path.write_text(template_text, encoding="utf-8")
         return True
+
+    def get_remote_url(self, remote_name: str = "origin") -> str:
+        try:
+            res = self._run(["remote", "get-url", remote_name], cwd=self._repo_cwd())
+            return res.stdout.strip()
+        except GitError:
+            return ""
+
+    def set_remote_url(self, url: str, remote_name: str = "origin") -> None:
+        url = url.strip()
+        if not url:
+            raise GitError("Remote URL cannot be empty")
+        # Check if remote exists
+        try:
+            self._run(["remote", "get-url", remote_name], cwd=self._repo_cwd())
+            remote_exists = True
+        except GitError:
+            remote_exists = False
+
+        if remote_exists:
+            self._run(["remote", "set-url", remote_name, url], cwd=self._repo_cwd())
+        else:
+            self._run(["remote", "add", remote_name, url], cwd=self._repo_cwd())
+
+    def push(self, remote_name: str = "origin", branch: Optional[str] = None, *, include_tags: bool = False) -> str:
+        if not branch:
+            branch = self.current_branch()
+        args = ["push"]
+        if include_tags:
+            # Note: plain `git push origin <branch>` does NOT push tags.
+            # `--tags` pushes lightweight + annotated tags.
+            args.append("--tags")
+        args += [remote_name, branch]
+        res = self._run(args, cwd=self._repo_cwd())
+        return res.stdout + res.stderr
+
+    def pull(self, remote_name: str = "origin", branch: Optional[str] = None) -> str:
+        if not branch:
+            branch = self.current_branch()
+        res = self._run(["pull", remote_name, branch], cwd=self._repo_cwd())
+        return res.stdout + res.stderr
+
+    def tag(self, tag_name: str, message: str = "") -> None:
+        tag_name = tag_name.strip()
+        if not tag_name:
+            raise GitError("Tag name cannot be empty")
+        args = ["tag", tag_name]
+        if message:
+            # Message implies an annotated tag.
+            args = ["tag", "-a", tag_name, "-m", message]
+        self._run(args, cwd=self._repo_cwd())

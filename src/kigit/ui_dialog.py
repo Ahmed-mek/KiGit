@@ -24,6 +24,7 @@ class CommitOptions:
     export_images: bool
     export_step: bool
     export_glb: bool
+    auto_version: bool = False
 
 
 class KiGitDialog:  # pragma: no cover (runs inside KiCad)
@@ -56,11 +57,13 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.page_commit = wx.Panel(self.notebook)
         self.page_branches = wx.Panel(self.notebook)
         self.page_timeline = wx.Panel(self.notebook)
+        self.page_sync = wx.Panel(self.notebook)
 
         self.notebook.AddPage(self.page_overview, "Overview")
         self.notebook.AddPage(self.page_commit, "Commit")
         self.notebook.AddPage(self.page_branches, "Branches")
         self.notebook.AddPage(self.page_timeline, "Timeline")
+        self.notebook.AddPage(self.page_sync, "Sync")
 
         self.log = wx.TextCtrl(self.dlg, style=wx.TE_MULTILINE | wx.TE_READONLY)
         self.log.SetMinSize((-1, 140))
@@ -88,6 +91,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self._build_commit_tab()
         self._build_branches_tab()
         self._build_timeline_tab()
+        self._build_sync_tab()
 
     def _build_overview_tab(self) -> None:
         wx = self._wx
@@ -170,6 +174,9 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.chk_drc = wx.CheckBox(self.page_commit, label="DRC guard (block commit if DRC violations exist)")
         self.chk_drc.SetValue(False)
 
+        self.chk_auto_version = wx.CheckBox(self.page_commit, label="Auto-version (append date, time & track version tag)")
+        self.chk_auto_version.SetValue(True)
+
         btn_export = wx.Button(self.page_commit, label="Export Now…")
         btn_commit = wx.Button(self.page_commit, label="Commit…")
         btn_export_commit = wx.Button(self.page_commit, label="Export + Commit")
@@ -192,6 +199,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(wx.StaticText(self.page_commit, label="Commit message"), 0, wx.ALL, 8)
         sizer.Add(self.commit_msg, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        sizer.Add(self.chk_auto_version, 0, wx.ALL, 8)
         sizer.Add(self.chk_export, 0, wx.ALL, 8)
         sizer.Add(exports_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(self.chk_drc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -248,27 +256,13 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.chk_all_branches.SetValue(True)
 
         self.spin_count = wx.SpinCtrl(self.page_timeline, min=10, max=500, initial=80)
+        self.spin_count.SetMinSize((90, -1))
 
         toolbar = wx.BoxSizer(wx.HORIZONTAL)
         toolbar.Add(self.chk_all_branches, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         toolbar.AddStretchSpacer(1)
         toolbar.Add(wx.StaticText(self.page_timeline, label="Max commits"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         toolbar.Add(self.spin_count, 0, wx.ALL, 6)
-
-        self.graph_box = wx.TextCtrl(
-            self.page_timeline,
-            style=wx.TE_MULTILINE | wx.TE_READONLY,
-        )
-        self.graph_box.SetFont(wx.Font(10, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-
-        self.commits = wx.ListCtrl(self.page_timeline, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
-        self.commits.InsertColumn(0, "Hash", width=80)
-        self.commits.InsertColumn(1, "Date", width=160)
-        self.commits.InsertColumn(2, "Author", width=140)
-        self.commits.InsertColumn(3, "Message", width=520)
-        self.commits.Bind(wx.EVT_LIST_ITEM_SELECTED, lambda evt: self._on_select_commit())
-
-        self.details = wx.TextCtrl(self.page_timeline, style=wx.TE_MULTILINE | wx.TE_READONLY)
 
         btn_refresh = wx.Button(self.page_timeline, label="Refresh")
         btn_diff_parent = wx.Button(self.page_timeline, label="Diff to parent")
@@ -288,6 +282,23 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         left = wx.Panel(splitter)
         right = wx.Panel(splitter)
 
+        mono = wx.Font(10, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+
+        # IMPORTANT: these controls must be parented to their splitter panes,
+        # otherwise wx will lay them out as children of page_timeline and they will overlap.
+        self.graph_box = wx.TextCtrl(left, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.graph_box.SetFont(mono)
+
+        self.commits = wx.ListCtrl(left, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
+        self.commits.InsertColumn(0, "Hash", width=80)
+        self.commits.InsertColumn(1, "Date", width=160)
+        self.commits.InsertColumn(2, "Author", width=140)
+        self.commits.InsertColumn(3, "Message", width=520)
+        self.commits.Bind(wx.EVT_LIST_ITEM_SELECTED, lambda evt: self._on_select_commit())
+
+        self.details = wx.TextCtrl(right, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.details.SetFont(mono)
+
         left_s = wx.BoxSizer(wx.VERTICAL)
         left_s.Add(wx.StaticText(left, label="Graph"), 0, wx.ALL, 6)
         left_s.Add(self.graph_box, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
@@ -300,12 +311,73 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         right_s.Add(self.details, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         right.SetSizer(right_s)
 
+        splitter.SetMinimumPaneSize(220)
+        splitter.SetSashGravity(0.5)
         splitter.SplitVertically(left, right, sashPosition=420)
 
         top.Add(toolbar, 0, wx.EXPAND)
         top.Add(btns, 0, wx.EXPAND)
         top.Add(splitter, 1, wx.EXPAND | wx.ALL, 6)
         self.page_timeline.SetSizer(top)
+
+    def _build_sync_tab(self) -> None:
+        wx = self._wx
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Remote Settings
+        remote_box = wx.StaticBoxSizer(wx.StaticBox(self.page_sync, label="Remote Repository"), wx.VERTICAL)
+        
+        self.txt_remote_url = wx.TextCtrl(self.page_sync)
+        btn_set_remote = wx.Button(self.page_sync, label="Set Remote URL…")
+        btn_set_remote.Bind(wx.EVT_BUTTON, lambda evt: self._on_set_remote())
+
+        remote_hz = wx.BoxSizer(wx.HORIZONTAL)
+        remote_hz.Add(wx.StaticText(self.page_sync, label="Origin URL:"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        remote_hz.Add(self.txt_remote_url, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        remote_hz.Add(btn_set_remote, 0, wx.ALL, 6)
+        
+        remote_box.Add(remote_hz, 0, wx.EXPAND | wx.ALL, 6)
+        
+        # Sync Actions (Push / Pull)
+        sync_box = wx.StaticBoxSizer(wx.StaticBox(self.page_sync, label="Synchronize"), wx.HORIZONTAL)
+        
+        btn_pull = wx.Button(self.page_sync, label="Pull (Fetch + Merge)")
+        btn_push = wx.Button(self.page_sync, label="Push to Origin")
+
+        self.chk_push_tags = wx.CheckBox(self.page_sync, label="Push tags too")
+        self.chk_push_tags.SetValue(True)
+        
+        btn_pull.Bind(wx.EVT_BUTTON, lambda evt: self._on_pull())
+        btn_push.Bind(wx.EVT_BUTTON, lambda evt: self._on_push())
+        
+        sync_box.Add(btn_pull, 1, wx.ALL | wx.EXPAND, 6)
+        sync_box.Add(btn_push, 1, wx.ALL | wx.EXPAND, 6)
+        sync_box.Add(self.chk_push_tags, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+
+        # Tagging
+        tag_box = wx.StaticBoxSizer(wx.StaticBox(self.page_sync, label="Tags"), wx.HORIZONTAL)
+        
+        btn_tag = wx.Button(self.page_sync, label="Create Tag…")
+        btn_tag.Bind(wx.EVT_BUTTON, lambda evt: self._on_tag())
+        
+        tag_box.Add(wx.StaticText(self.page_sync, label="Create a new tag for the current commit (e.g., v1.0)"), 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        tag_box.Add(btn_tag, 0, wx.ALL, 6)
+
+        info_text = (
+            "Authentication / التحقق من الهوية:\n"
+            "KiGit uses your system's Git credentials.\n"
+            "If using HTTPS, ensure a Git Credential Manager is installed.\n"
+            "If using SSH (git@github.com:...), ensure your SSH keys are set up."
+        )
+
+        sizer.Add(remote_box, 0, wx.EXPAND | wx.ALL, 8)
+        sizer.Add(sync_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        sizer.Add(tag_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        sizer.AddStretchSpacer(1)
+        sizer.Add(wx.StaticText(self.page_sync, label=info_text), 0, wx.ALL, 8)
+
+        self.page_sync.SetSizer(sizer)
 
     def ShowModal(self) -> int:
         return self.dlg.ShowModal()
@@ -338,10 +410,15 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
                 self.status_box.SetValue(self.git.status_porcelain())
             except Exception as exc:
                 self.status_box.SetValue(f"(status error) {exc}")
+            try:
+                self.txt_remote_url.SetValue(self.git.get_remote_url())
+            except Exception:
+                self.txt_remote_url.SetValue("")
         else:
             self.txt_repo_root.SetLabel("(not a git repo)")
             self.txt_branch.SetLabel("")
             self.status_box.SetValue("")
+            self.txt_remote_url.SetValue("")
 
         from .kicad_cli import KiCadCli, KiCadCliNotFound
 
@@ -408,6 +485,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         export_images = bool(self.chk_images.GetValue()) and auto_export
         export_step = bool(self.chk_step.GetValue()) and auto_export
         export_glb = bool(self.chk_glb.GetValue()) and auto_export
+        auto_version = bool(self.chk_auto_version.GetValue())
         return CommitOptions(
             message=msg,
             auto_export=auto_export,
@@ -420,6 +498,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             export_images=export_images,
             export_step=export_step,
             export_glb=export_glb,
+            auto_version=auto_version,
         )
 
     def _run_with_busy(self, fn, label: str) -> None:
@@ -627,3 +706,121 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
                 wx.TheClipboard.SetData(wx.TextDataObject(rev))
             finally:
                 wx.TheClipboard.Close()
+
+    def _on_set_remote(self) -> None:
+        wx = self._wx
+        if not self.git.is_git_repo():
+            wx.MessageBox("Initialize a Git repo first.", "KiGit", wx.OK | wx.ICON_WARNING)
+            return
+        
+        current_url = self.txt_remote_url.GetValue()
+        dlg = wx.TextEntryDialog(self.dlg, "Enter Git remote URL (origin):", "Set Remote URL", current_url)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            new_url = dlg.GetValue().strip()
+        finally:
+            dlg.Destroy()
+            
+        if not new_url:
+            return
+            
+        try:
+            self.git.set_remote_url(new_url)
+            self._log(f"Remote URL set to: {new_url}")
+            self.refresh()
+        except Exception as exc:
+            wx.MessageBox(str(exc), "KiGit", wx.OK | wx.ICON_ERROR)
+
+    def _on_push(self) -> None:
+        wx = self._wx
+        if not self.git.is_git_repo():
+            wx.MessageBox("Initialize a Git repo first.", "KiGit", wx.OK | wx.ICON_WARNING)
+            return
+        
+        remote = self.txt_remote_url.GetValue().strip()
+        if not remote:
+            wx.MessageBox("Please set a Remote URL first.", "KiGit", wx.OK | wx.ICON_WARNING)
+            return
+
+        resp = wx.MessageBox(
+            f"Push current branch to origin?\n\nRemote:\n{remote}",
+            "KiGit",
+            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+        )
+        if resp != wx.YES:
+            return
+
+        def work():
+            out = self.git.push(include_tags=bool(self.chk_push_tags.GetValue()))
+            self._log(f"Push successful:\n{out}")
+
+        try:
+            self._run_with_busy(work, "Pushing to remote…")
+            self.refresh()
+        except Exception as exc:
+            wx.MessageBox(f"Push failed:\n{exc}", "KiGit Error", wx.OK | wx.ICON_ERROR)
+
+    def _on_pull(self) -> None:
+        wx = self._wx
+        if not self.git.is_git_repo():
+            wx.MessageBox("Initialize a Git repo first.", "KiGit", wx.OK | wx.ICON_WARNING)
+            return
+
+        remote = self.txt_remote_url.GetValue().strip()
+        if not remote:
+            wx.MessageBox("Please set a Remote URL first.", "KiGit", wx.OK | wx.ICON_WARNING)
+            return
+
+        resp = wx.MessageBox(
+            f"Pull updates from origin into current branch?\n\nRemote:\n{remote}",
+            "KiGit",
+            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+        )
+        if resp != wx.YES:
+            return
+
+        def work():
+            out = self.git.pull()
+            self._log(f"Pull successful:\n{out}")
+
+        try:
+            self._run_with_busy(work, "Pulling from remote…")
+            self.refresh()
+        except Exception as exc:
+            wx.MessageBox(f"Pull failed:\n{exc}", "KiGit Error", wx.OK | wx.ICON_ERROR)
+
+    def _on_tag(self) -> None:
+        wx = self._wx
+        if not self.git.is_git_repo():
+            wx.MessageBox("Initialize a Git repo first.", "KiGit", wx.OK | wx.ICON_WARNING)
+            return
+
+        dlg = wx.TextEntryDialog(self.dlg, "Enter tag name (e.g. v1.0.0):", "Create Tag")
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            tag_name = dlg.GetValue().strip()
+        finally:
+            dlg.Destroy()
+
+        if not tag_name:
+            return
+
+        try:
+            # Lightweight tag is OK, but make sure Push can include tags.
+            self.git.tag(tag_name)
+            self._log(f"Created tag: {tag_name}")
+            self.refresh()
+
+            resp = wx.MessageBox(
+                f"Push tag '{tag_name}' now?",
+                "KiGit",
+                wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+            )
+            if resp == wx.YES:
+                out = self.git.push(include_tags=True)
+                self._log(f"Pushed tags:\n{out}")
+                self.refresh()
+        except Exception as exc:
+            wx.MessageBox(str(exc), "KiGit Error", wx.OK | wx.ICON_ERROR)

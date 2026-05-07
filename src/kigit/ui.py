@@ -18,6 +18,7 @@ class CommitOptions:
     message: str
     auto_export: bool = True
     run_drc_guard: bool = False
+    auto_version: bool = False
 
 
 def prompt_commit_options(parent, default_message: str) -> CommitOptions:

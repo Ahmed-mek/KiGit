@@ -66,11 +66,29 @@ def smart_commit(
             notes.append(f"Auto-export failed ({exc})")
 
     handler.add_all()
-    commit_hash = handler.commit(options.message)
+    
+    commit_msg = options.message
+    version_tag = ""
+    
+    if getattr(options, "auto_version", False):
+        from datetime import datetime
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        count = handler.get_commit_count() + 1
+        version_tag = f"v1.0.{count}"
+        commit_msg = f"{commit_msg.strip()}\n\n[Version: {version_tag}] [Date: {now_str}]"
+
+    commit_hash = handler.commit(commit_msg)
     if not commit_hash:
         msg = "No changes to commit"
     else:
         msg = f"Committed: {commit_hash}"
+        if version_tag:
+            try:
+                handler.tag(version_tag, message="Auto-generated version tag")
+                msg += f" (Tagged as {version_tag})"
+            except Exception as e:
+                msg += f" (Failed to tag: {e})"
+                
     if notes:
         msg = msg + "\n\n" + "\n".join(notes)
     return msg
