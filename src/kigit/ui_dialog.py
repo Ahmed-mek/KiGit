@@ -254,15 +254,24 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.project_dir = project_dir
         self.board_file = board_file
 
-        from .project import discover_project_files
+        try:
+            from .project import discover_project_files
+        except Exception:
+            from project import discover_project_files  # type: ignore
 
         self.files = discover_project_files(project_dir, board_file=board_file)
 
-        from .git_handler import GitHandler
+        try:
+            from .git_handler import GitHandler
+        except Exception:
+            from git_handler import GitHandler  # type: ignore
 
         self.git = GitHandler(self.files.project_dir)
 
-        from .settings import KiGitSettings
+        try:
+            from .settings import KiGitSettings
+        except Exception:
+            from settings import KiGitSettings  # type: ignore
 
         self.settings = KiGitSettings.load(self.files.project_dir)
 
@@ -831,7 +840,10 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         except Exception:
             pass
 
-        from .kicad_cli import KiCadCli, KiCadCliNotFound
+        try:
+            from .kicad_cli import KiCadCli, KiCadCliNotFound
+        except Exception:
+            from kicad_cli import KiCadCli, KiCadCliNotFound  # type: ignore
 
         try:
             KiCadCli.detect()
@@ -1055,7 +1067,10 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             return
 
         def work():
-            from .kicad_cli import KiCadCli
+            try:
+                from .kicad_cli import KiCadCli
+            except Exception:
+                from kicad_cli import KiCadCli  # type: ignore
 
             cli = KiCadCli.detect()
             revision = getattr(self.settings, "last_revision", "") if hasattr(self, "settings") else ""
@@ -1103,7 +1118,10 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             return
 
         def work():
-            from .gitops import smart_commit
+            try:
+                from .gitops import smart_commit
+            except Exception:
+                from gitops import smart_commit  # type: ignore
 
             opts = self._collect_commit_options(force_export=force_export)
             return smart_commit(

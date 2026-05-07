@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .git_handler import GitHandler
-from .kicad_cli import KiCadCli, KiCadCliNotFound
-from .ui import CommitOptions
+try:
+    from .git_handler import GitHandler
+    from .kicad_cli import KiCadCli, KiCadCliNotFound
+    from .ui import CommitOptions
+except Exception:
+    from git_handler import GitHandler  # type: ignore
+    from kicad_cli import KiCadCli, KiCadCliNotFound  # type: ignore
+    from ui import CommitOptions  # type: ignore
 
 
 def smart_commit(
@@ -45,7 +50,11 @@ def smart_commit(
                 p = Path(schematic_file)
                 if p.exists():
                     schematic_backup = p.read_text(encoding="utf-8", errors="replace")
-                from .kicad_schematic import set_title_block_revision
+
+                try:
+                    from .kicad_schematic import set_title_block_revision
+                except Exception:
+                    from kicad_schematic import set_title_block_revision  # type: ignore
 
                 schematic_rev_changed = bool(set_title_block_revision(schematic_file, revision))
                 if schematic_rev_changed:
@@ -125,7 +134,10 @@ def smart_commit(
                 msg += f" ({footer_revision})"
                 # Persist last committed revision for stable export-only runs.
                 try:
-                    from .settings import KiGitSettings
+                    try:
+                        from .settings import KiGitSettings
+                    except Exception:
+                        from settings import KiGitSettings  # type: ignore
 
                     s = KiGitSettings.load(handler.project_dir)
                     s.last_revision = footer_revision

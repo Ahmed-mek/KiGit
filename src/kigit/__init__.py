@@ -14,7 +14,10 @@ except Exception:
 
 if in_kicad:
     try:
-        from .kigit_action import KiGitAction
+        try:
+            from .kigit_action import KiGitAction
+        except Exception:
+            from kigit_action import KiGitAction  # type: ignore
 
         KiGitAction().register()
     except Exception:

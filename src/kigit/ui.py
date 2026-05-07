@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Back-compat wrapper: older code imports from `.ui`.
 # The real UI is implemented in `ui_dialog.py`.
-from .ui_dialog import KiGitDialog as _KiGitDialog
+try:
+    from .ui_dialog import KiGitDialog as _KiGitDialog
+except Exception:
+    from ui_dialog import KiGitDialog as _KiGitDialog  # type: ignore
 
 
 def _wx():

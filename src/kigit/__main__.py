@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .git_handler import GitHandler
+try:
+    from .git_handler import GitHandler
+except Exception:
+    from git_handler import GitHandler  # type: ignore
 
 
 def main(argv: list[str]) -> int:
@@ -24,4 +27,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

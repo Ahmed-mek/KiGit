@@ -13,7 +13,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_LINK="${REPO_ROOT}/.stage_pcm/plugins"
 DEST_DIR="${HOME}/.local/share/kicad/10.0/3rdparty/plugins"
 
-NAME="com-github-ahmed-mek-kigit-dev"
+NAME="com_github_ahmed_mek_KiGit_dev"
 DEST_LINK="${DEST_DIR}/${NAME}"
 
 if [[ ! -d "${SRC_LINK}" ]]; then
