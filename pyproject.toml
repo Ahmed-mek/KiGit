@@ -1,0 +1,9 @@
+[project]
+name = "kigit"
+version = "0.1.0"
+description = "KiCad plugin scaffold for Git workflows"
+requires-python = ">=3.8"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

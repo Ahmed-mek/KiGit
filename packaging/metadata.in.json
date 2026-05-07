@@ -1,0 +1,36 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v2",
+  "name": "KiGit",
+  "description": "Git workflows for KiCad projects (scaffold).",
+  "description_full": "KiGit is a KiCad SWIG Action Plugin scaffold that wires Git operations and optional kicad-cli automation into a KiCad-friendly workflow.",
+  "identifier": "com.github.ahmedmikatonikpc.kigit",
+  "type": "plugin",
+  "author": {
+    "name": "KiGit Maintainer",
+    "contact": {
+      "web": "https://github.com/ahmedmikatonikpc/KiGit"
+    }
+  },
+  "maintainer": {
+    "name": "KiGit Maintainer",
+    "contact": {
+      "web": "https://github.com/ahmedmikatonikpc/KiGit"
+    }
+  },
+  "license": "GPL-3.0-or-later",
+  "resources": {
+    "homepage": "https://github.com/ahmedmikatonikpc/KiGit",
+    "documentation": "https://github.com/ahmedmikatonikpc/KiGit#readme"
+  },
+  "versions": [
+    {
+      "version": "0.1.0",
+      "status": "stable",
+      "kicad_version": "8.0",
+      "kicad_version_max": "10.99",
+      "runtime": "swig",
+      "platforms": ["windows", "macos", "linux"]
+    }
+  ]
+}
+

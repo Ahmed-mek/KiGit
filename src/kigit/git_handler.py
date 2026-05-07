@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+import os
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Optional
+
+
+class GitError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class GitResult:
+    argv: list[str]
+    cwd: str
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+class GitHandler:
+    def __init__(self, project_dir: str, git_exe: str = "git", timeout_s: int = 30) -> None:
+        self.project_dir = os.path.abspath(project_dir)
+        self._git = git_exe
+        self._timeout_s = timeout_s
+        self._repo_root_cache: Optional[str] = None
+
+    def _run(self, args: Iterable[str], cwd: Optional[str] = None) -> GitResult:
+        argv = [self._git, *list(args)]
+        run_cwd = cwd or self.project_dir
+        try:
+            cp = subprocess.run(
+                argv,
+                cwd=run_cwd,
+                text=True,
+                capture_output=True,
+                timeout=self._timeout_s,
+                check=False,
+            )
+        except FileNotFoundError as e:
+            raise GitError("git executable not found. Install Git and ensure `git` is in PATH.") from e
+        except subprocess.TimeoutExpired as e:
+            raise GitError(f"git command timed out: {' '.join(argv)}") from e
+
+        res = GitResult(
+            argv=argv,
+            cwd=run_cwd,
+            returncode=cp.returncode,
+            stdout=cp.stdout or "",
+            stderr=cp.stderr or "",
+        )
+        if res.returncode != 0:
+            msg = res.stderr.strip() or res.stdout.strip() or f"git failed ({res.returncode})"
+            raise GitError(msg)
+        return res
+
+    def _repo_cwd(self) -> str:
+        """
+        Prefer running commands at repo root once initialized/discovered.
+        Falls back to project_dir when not in a work tree.
+        """
+        if self._repo_root_cache:
+            return self._repo_root_cache
+        try:
+            root = self._run(["rev-parse", "--show-toplevel"]).stdout.strip()
+            if root:
+                self._repo_root_cache = root
+                return root
+        except GitError:
+            return self.project_dir
+        return self.project_dir
+
+    def is_git_repo(self) -> bool:
+        try:
+            self._run(["rev-parse", "--is-inside-work-tree"])
+            return True
+        except GitError:
+            return False
+
+    def repo_root(self) -> str:
+        return self._repo_cwd()
+
+    def init(self) -> None:
+        self._run(["init"], cwd=self.project_dir)
+        self._repo_root_cache = self.project_dir
+
+    def status_porcelain(self) -> str:
+        res = self._run(["status", "--porcelain=v1"], cwd=self._repo_cwd())
+        return res.stdout
+
+    def add_all(self) -> None:
+        self._run(["add", "-A"], cwd=self._repo_cwd())
+
+    def commit(self, message: str) -> str:
+        message = (message or "").strip()
+        if not message:
+            raise GitError("Commit message is empty")
+        try:
+            self._run(["commit", "-m", message], cwd=self._repo_cwd())
+        except GitError as e:
+            msg = str(e)
+            if "nothing to commit" in msg.lower() or "no changes added to commit" in msg.lower():
+                return ""
+            if "user.name" in msg or "user.email" in msg or "Author identity unknown" in msg:
+                raise GitError(
+                    "Git author identity is not configured. Set `git config --global user.name` and "
+                    "`git config --global user.email` (or configure per-repo)."
+                ) from e
+            raise
+        return self.head_short()
+
+    def head_short(self) -> str:
+        res = self._run(["rev-parse", "--short", "HEAD"], cwd=self._repo_cwd())
+        return res.stdout.strip()
+
+    def current_branch(self) -> str:
+        res = self._run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=self._repo_cwd())
+        return res.stdout.strip()
+
+    def list_branches(self) -> list[str]:
+        res = self._run(["branch", "--format=%(refname:short)"], cwd=self._repo_cwd())
+        return [line.strip() for line in res.stdout.splitlines() if line.strip()]
+
+    def create_branch(self, name: str, checkout: bool = False) -> None:
+        name = (name or "").strip()
+        if not name:
+            raise GitError("Branch name is empty")
+        self._run(["branch", name], cwd=self._repo_cwd())
+        if checkout:
+            self.checkout(name)
+
+    def checkout(self, name: str) -> None:
+        name = (name or "").strip()
+        if not name:
+            raise GitError("Branch name is empty")
+        self._run(["checkout", name], cwd=self._repo_cwd())
+
+    def ensure_gitignore(self, template_text: str) -> bool:
+        """
+        Writes .gitignore if missing. Returns True if created.
+        """
+        path = Path(self._repo_cwd()) / ".gitignore"
+        if path.exists():
+            return False
+        path.write_text(template_text, encoding="utf-8")
+        return True

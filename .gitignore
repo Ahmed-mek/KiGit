@@ -1,0 +1,21 @@
+# Python temporary files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# KiCad Plugin specific build folders
+.stage_pcm/
+dist/
+*.zip
+
+# IDE configurations
+.vscode/
+.idea/

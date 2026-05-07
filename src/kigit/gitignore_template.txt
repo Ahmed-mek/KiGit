@@ -1,0 +1,32 @@
+# KiCad temporary and backup files
+*.000
+*.bak
+*.bck
+*.kicad_pcb-bak
+*.kicad_sch-bak
+*-backups
+*-cache*
+*-bak
+*-bak*
+*~
+~*
+_autosave-*
+#auto_saved_files#
+fp-info-cache
+~*.lck
+
+# KiCad local history and local settings
+.history
+*.kicad_prl
+
+# Netlist and autorouter exports
+*.net
+*.dsn
+*.ses
+
+# NOTE:
+# KiGit can auto-export BOM/PDF into `exports/` and commit them.
+# If you prefer NOT to version exports, add rules like:
+#   exports/
+#   *.csv
+#   *.pdf
