@@ -80,7 +80,21 @@ class KiCadCli:
             board_file=str(pcb_files[0]) if pcb_files else None,
         )
 
-    def export_artifacts(self, *, project_dir: str, schematic_file: Optional[str], board_file: Optional[str]) -> None:
+    def export_artifacts(
+        self,
+        *,
+        project_dir: str,
+        schematic_file: Optional[str],
+        board_file: Optional[str],
+        export_pdf: bool = True,
+        export_bom: bool = True,
+        export_layers_svg: bool = True,
+        export_gerbers: bool = True,
+        export_drill: bool = True,
+        export_images: bool = True,
+        export_step: bool = False,
+        export_glb: bool = False,
+    ) -> None:
         """
         Phase 2: Auto-export artifacts into `git-exports/`.
         - schematic_file: root schematic (*.kicad_sch)
@@ -90,23 +104,32 @@ class KiCadCli:
         out_dir = pdir / "git-exports"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        if schematic_file:
+        if schematic_file and export_pdf:
             self.export_schematic_pdf(schematic_file, str(out_dir / "schematic.pdf"))
+        if schematic_file and export_bom:
             self.export_bom_csv(schematic_file, str(out_dir / "bom.csv"))
 
         if board_file:
             # Prep for Phase 3 (visual diff): plot key layers to SVG.
-            self.export_pcb_layers_svg(
-                board_file,
-                str(out_dir / "layers_svg"),
-                layers=["F.Cu", "B.Cu", "F.SilkS", "B.SilkS", "Edge.Cuts"],
-            )
+            if export_layers_svg:
+                self.export_pcb_layers_svg(
+                    board_file,
+                    str(out_dir / "layers_svg"),
+                    layers=["F.Cu", "B.Cu", "F.SilkS", "B.SilkS", "Edge.Cuts"],
+                )
 
             # Phase 2 requested outputs: Gerbers + drill + a quick visual render.
-            self.export_gerbers(board_file, str(out_dir / "gerbers"))
-            self.export_drill(board_file, str(out_dir / "drill"))
-            self.render_pcb_image(board_file, str(out_dir / "pcb_top.png"), side="top")
-            self.render_pcb_image(board_file, str(out_dir / "pcb_bottom.png"), side="bottom")
+            if export_gerbers:
+                self.export_gerbers(board_file, str(out_dir / "gerbers"))
+            if export_drill:
+                self.export_drill(board_file, str(out_dir / "drill"))
+            if export_images:
+                self.render_pcb_image(board_file, str(out_dir / "pcb_top.png"), side="top")
+                self.render_pcb_image(board_file, str(out_dir / "pcb_bottom.png"), side="bottom")
+            if export_step:
+                self.export_step(board_file, str(out_dir / "board.step"))
+            if export_glb:
+                self.export_glb(board_file, str(out_dir / "board.glb"))
 
     def export_schematic_pdf(self, schematic_file: str, out_pdf: str) -> None:
         self._run(["sch", "export", "pdf", "--output", out_pdf, schematic_file])
@@ -117,7 +140,8 @@ class KiCadCli:
     def export_pcb_layers_svg(self, board_file: str, out_dir: str, *, layers: list[str]) -> None:
         layer_list = ",".join(layers)
         Path(out_dir).mkdir(parents=True, exist_ok=True)
-        self._run(["pcb", "export", "svg", "--output", out_dir, "--layers", layer_list, board_file])
+        # Ensure output is treated as a directory (multi-file mode).
+        self._run(["pcb", "export", "svg", "--mode-multi", "--output", out_dir, "--layers", layer_list, board_file])
 
     def export_gerbers(self, board_file: str, out_dir: str) -> None:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -139,6 +163,14 @@ class KiCadCli:
                 board_file,
             ]
         )
+
+    def export_step(self, board_file: str, out_file: str) -> None:
+        Path(out_file).parent.mkdir(parents=True, exist_ok=True)
+        self._run(["pcb", "export", "step", "--output", out_file, "--force", board_file])
+
+    def export_glb(self, board_file: str, out_file: str) -> None:
+        Path(out_file).parent.mkdir(parents=True, exist_ok=True)
+        self._run(["pcb", "export", "glb", "--output", out_file, "--force", board_file])
 
     def render_pcb_image(self, board_file: str, out_file: str, *, side: str) -> None:
         Path(out_file).parent.mkdir(parents=True, exist_ok=True)

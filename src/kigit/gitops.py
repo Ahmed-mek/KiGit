@@ -53,6 +53,14 @@ def smart_commit(
                 project_dir=handler.project_dir,
                 schematic_file=schematic_file,
                 board_file=board_file,
+                export_pdf=bool(getattr(options, "export_pdf", True)),
+                export_bom=bool(getattr(options, "export_bom", True)),
+                export_layers_svg=bool(getattr(options, "export_layers_svg", True)),
+                export_gerbers=bool(getattr(options, "export_gerbers", True)),
+                export_drill=bool(getattr(options, "export_drill", True)),
+                export_images=bool(getattr(options, "export_images", True)),
+                export_step=bool(getattr(options, "export_step", False)),
+                export_glb=bool(getattr(options, "export_glb", False)),
             )
         except Exception as exc:
             notes.append(f"Auto-export failed ({exc})")

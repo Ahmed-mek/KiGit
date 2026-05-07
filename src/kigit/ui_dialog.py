@@ -16,6 +16,14 @@ class CommitOptions:
     message: str
     auto_export: bool
     run_drc_guard: bool
+    export_pdf: bool
+    export_bom: bool
+    export_layers_svg: bool
+    export_gerbers: bool
+    export_drill: bool
+    export_images: bool
+    export_step: bool
+    export_glb: bool
 
 
 class KiGitDialog:  # pragma: no cover (runs inside KiCad)
@@ -120,8 +128,42 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             default_msg = f"KiCad: update {Path(self.files.board_file).stem}"
 
         self.commit_msg = wx.TextCtrl(self.page_commit, value=default_msg, style=wx.TE_MULTILINE)
-        self.chk_export = wx.CheckBox(self.page_commit, label="Auto-export (PDF, BOM, Gerbers, drill, images) to git-exports/")
+        self.chk_export = wx.CheckBox(self.page_commit, label="Enable exports to git-exports/")
         self.chk_export.SetValue(True)
+
+        exports_box = wx.StaticBoxSizer(wx.StaticBox(self.page_commit, label="Exports"), wx.VERTICAL)
+        self.chk_pdf = wx.CheckBox(self.page_commit, label="Schematic PDF")
+        self.chk_bom = wx.CheckBox(self.page_commit, label="BOM (CSV)")
+        self.chk_layers_svg = wx.CheckBox(self.page_commit, label="PCB layer snapshots (SVG)")
+        self.chk_gerbers = wx.CheckBox(self.page_commit, label="Gerbers")
+        self.chk_drill = wx.CheckBox(self.page_commit, label="Drill files")
+        self.chk_images = wx.CheckBox(self.page_commit, label="PCB renders (PNG)")
+        self.chk_step = wx.CheckBox(self.page_commit, label="3D model (STEP)")
+        self.chk_glb = wx.CheckBox(self.page_commit, label="3D model (GLB)")
+
+        for chk in (
+            self.chk_pdf,
+            self.chk_bom,
+            self.chk_layers_svg,
+            self.chk_gerbers,
+            self.chk_drill,
+            self.chk_images,
+        ):
+            chk.SetValue(True)
+        # 3D exports can be large/slow; default OFF.
+        self.chk_step.SetValue(False)
+        self.chk_glb.SetValue(False)
+
+        exports_box.Add(self.chk_pdf, 0, wx.ALL, 4)
+        exports_box.Add(self.chk_bom, 0, wx.ALL, 4)
+        exports_box.Add(self.chk_layers_svg, 0, wx.ALL, 4)
+        exports_box.Add(self.chk_gerbers, 0, wx.ALL, 4)
+        exports_box.Add(self.chk_drill, 0, wx.ALL, 4)
+        exports_box.Add(self.chk_images, 0, wx.ALL, 4)
+        exports_box.Add(self.chk_step, 0, wx.ALL, 4)
+        exports_box.Add(self.chk_glb, 0, wx.ALL, 4)
+
+        self.chk_export.Bind(wx.EVT_CHECKBOX, lambda evt: self._sync_export_enable())
         self.chk_drc = wx.CheckBox(self.page_commit, label="DRC guard (block commit if DRC violations exist)")
         self.chk_drc.SetValue(False)
 
@@ -148,10 +190,26 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         sizer.Add(wx.StaticText(self.page_commit, label="Commit message"), 0, wx.ALL, 8)
         sizer.Add(self.commit_msg, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
         sizer.Add(self.chk_export, 0, wx.ALL, 8)
+        sizer.Add(exports_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(self.chk_drc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(info, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(btns, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         self.page_commit.SetSizer(sizer)
+        self._sync_export_enable()
+
+    def _sync_export_enable(self) -> None:
+        enabled = bool(self.chk_export.GetValue())
+        for chk in (
+            self.chk_pdf,
+            self.chk_bom,
+            self.chk_layers_svg,
+            self.chk_gerbers,
+            self.chk_drill,
+            self.chk_images,
+            self.chk_step,
+            self.chk_glb,
+        ):
+            chk.Enable(enabled)
 
     def _build_branches_tab(self) -> None:
         wx = self._wx
@@ -270,10 +328,26 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         if not msg:
             raise RuntimeError("Commit message is required")
         auto_export = bool(self.chk_export.GetValue()) if force_export is None else bool(force_export)
+        export_pdf = bool(self.chk_pdf.GetValue()) and auto_export
+        export_bom = bool(self.chk_bom.GetValue()) and auto_export
+        export_layers_svg = bool(self.chk_layers_svg.GetValue()) and auto_export
+        export_gerbers = bool(self.chk_gerbers.GetValue()) and auto_export
+        export_drill = bool(self.chk_drill.GetValue()) and auto_export
+        export_images = bool(self.chk_images.GetValue()) and auto_export
+        export_step = bool(self.chk_step.GetValue()) and auto_export
+        export_glb = bool(self.chk_glb.GetValue()) and auto_export
         return CommitOptions(
             message=msg,
             auto_export=auto_export,
             run_drc_guard=bool(self.chk_drc.GetValue()),
+            export_pdf=export_pdf,
+            export_bom=export_bom,
+            export_layers_svg=export_layers_svg,
+            export_gerbers=export_gerbers,
+            export_drill=export_drill,
+            export_images=export_images,
+            export_step=export_step,
+            export_glb=export_glb,
         )
 
     def _run_with_busy(self, fn, label: str) -> None:
@@ -288,8 +362,21 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
     def _on_export_only(self) -> None:
         wx = self._wx
-        if not self.git.is_git_repo():
-            wx.MessageBox("Initialize a Git repo first (Overview tab).", "KiGit", wx.OK | wx.ICON_WARNING)
+        if not bool(self.chk_export.GetValue()):
+            wx.MessageBox("Enable exports first (Commit tab).", "KiGit", wx.OK | wx.ICON_INFORMATION)
+            return
+
+        export_pdf = bool(self.chk_pdf.GetValue())
+        export_bom = bool(self.chk_bom.GetValue())
+        export_layers_svg = bool(self.chk_layers_svg.GetValue())
+        export_gerbers = bool(self.chk_gerbers.GetValue())
+        export_drill = bool(self.chk_drill.GetValue())
+        export_images = bool(self.chk_images.GetValue())
+        export_step = bool(self.chk_step.GetValue())
+        export_glb = bool(self.chk_glb.GetValue())
+
+        if not any([export_pdf, export_bom, export_layers_svg, export_gerbers, export_drill, export_images, export_step, export_glb]):
+            wx.MessageBox("No exports selected.", "KiGit", wx.OK | wx.ICON_INFORMATION)
             return
 
         def work():
@@ -300,6 +387,14 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
                 project_dir=self.files.project_dir,
                 schematic_file=self.files.schematic_file,
                 board_file=self.files.board_file,
+                export_pdf=export_pdf,
+                export_bom=export_bom,
+                export_layers_svg=export_layers_svg,
+                export_gerbers=export_gerbers,
+                export_drill=export_drill,
+                export_images=export_images,
+                export_step=export_step,
+                export_glb=export_glb,
             )
             self._log("Export complete: git-exports/")
 

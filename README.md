@@ -17,6 +17,7 @@ This repository is currently a **scaffold** for a KiCad Python plugin (SWIG `pcb
   - PCB layer SVG export (for later visual diff)
   - Gerbers + drill export
   - 3D PCB renders (PNG)
+  - 3D models (STEP, GLB)
   - PCB DRC report (optional DRC guard)
 
 ## Quick dev smoke-check (outside KiCad)
