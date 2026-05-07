@@ -34,7 +34,7 @@ def prompt_commit_options(parent, default_message: str) -> CommitOptions:
 
             info = wx.StaticText(
                 self,
-                label="Exports are written to an `exports/` folder in the project directory. Auto-export and DRC guard require kicad-cli.",
+                label="Exports are written to a `git-exports/` folder in the project directory. Auto-export and DRC guard require kicad-cli.",
             )
 
             btns = self.CreateButtonSizer(wx.OK | wx.CANCEL)

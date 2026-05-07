@@ -38,7 +38,7 @@ def smart_commit(
         from pathlib import Path
 
         pdir = Path(handler.project_dir)
-        report_path = pdir / "exports" / "drc_report.txt"
+        report_path = pdir / "git-exports" / "drc_report.txt"
         ok = cli.run_pcb_drc_report(board_file, str(report_path))
         if not ok:
             raise RuntimeError(f"DRC violations found. See: {report_path}")

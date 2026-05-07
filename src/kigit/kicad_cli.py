@@ -82,12 +82,12 @@ class KiCadCli:
 
     def export_artifacts(self, *, project_dir: str, schematic_file: Optional[str], board_file: Optional[str]) -> None:
         """
-        Phase 2: Auto-export BOM/PDF (and optional layer SVG) into `exports/`.
+        Phase 2: Auto-export artifacts into `git-exports/`.
         - schematic_file: root schematic (*.kicad_sch)
         - board_file: board (*.kicad_pcb)
         """
         pdir = Path(project_dir)
-        out_dir = pdir / "exports"
+        out_dir = pdir / "git-exports"
         out_dir.mkdir(parents=True, exist_ok=True)
 
         if schematic_file:

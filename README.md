@@ -15,6 +15,8 @@ This repository is currently a **scaffold** for a KiCad Python plugin (SWIG `pcb
   - Schematic PDF export
   - BOM CSV export
   - PCB layer SVG export (for later visual diff)
+  - Gerbers + drill export
+  - 3D PCB renders (PNG)
   - PCB DRC report (optional DRC guard)
 
 ## Quick dev smoke-check (outside KiCad)
@@ -35,5 +37,6 @@ Copy the *contents* of the ZIP’s `plugins/` directory into your KiCad scriptin
 - The plugin keeps UI thin and puts logic in helper modules (easier to test).
 - Git operations use the system `git` CLI via `subprocess` (no GitPython dependency).
 - `kicad-cli` integration is optional and fails gracefully when missing.
+ - Auto-export writes all artifacts to `git-exports/` under the project directory.
 
 # KiGit
