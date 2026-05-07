@@ -262,6 +262,10 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
         self.git = GitHandler(self.files.project_dir)
 
+        from .settings import KiGitSettings
+
+        self.settings = KiGitSettings.load(self.files.project_dir)
+
         self.dlg = wx.Dialog(None, title="KiGit", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
 
         self._build_ui()
@@ -271,6 +275,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         wx = self._wx
 
         splitter = wx.SplitterWindow(self.dlg, style=wx.SP_LIVE_UPDATE)
+        self._main_splitter = splitter
         top_pane = wx.Panel(splitter)
         bottom_pane = wx.Panel(splitter)
 
@@ -300,7 +305,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         bottom_pane.SetSizer(bottom_sizer)
 
         splitter.SetMinimumPaneSize(100)
-        splitter.SplitHorizontally(top_pane, bottom_pane, sashPosition=-150)
+        splitter.SplitHorizontally(top_pane, bottom_pane, sashPosition=-70)
 
         btn_refresh = wx.Button(self.dlg, label="Refresh")
         btn_close = wx.Button(self.dlg, label="Close")
@@ -318,6 +323,22 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
         self.dlg.SetSizer(root)
         self.dlg.SetMinSize((720, 560))
+
+        # Apply persisted UI settings (best-effort).
+        try:
+            ui = self.settings.ui if hasattr(self, "settings") else {}
+            if isinstance(ui, dict):
+                size = ui.get("dlg_size")
+                if isinstance(size, (list, tuple)) and len(size) == 2:
+                    self.dlg.SetSize((int(size[0]), int(size[1])))
+                pos = ui.get("dlg_pos")
+                if isinstance(pos, (list, tuple)) and len(pos) == 2:
+                    self.dlg.SetPosition((int(pos[0]), int(pos[1])))
+                sash = ui.get("main_sash")
+                if isinstance(sash, int):
+                    splitter.SetSashPosition(sash)
+        except Exception:
+            pass
 
         self._build_overview_tab()
         self._build_commit_tab()
@@ -393,18 +414,47 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.chk_step.SetValue(False)
         self.chk_glb.SetValue(False)
 
-        exports_box.Add(self.chk_pdf, 0, wx.ALL, 4)
-        exports_box.Add(self.chk_bom, 0, wx.ALL, 4)
-        exports_box.Add(self.chk_layers_svg, 0, wx.ALL, 4)
-        exports_box.Add(self.chk_gerbers, 0, wx.ALL, 4)
-        exports_box.Add(self.chk_drill, 0, wx.ALL, 4)
-        exports_box.Add(self.chk_images, 0, wx.ALL, 4)
-        exports_box.Add(self.chk_step, 0, wx.ALL, 4)
-        exports_box.Add(self.chk_glb, 0, wx.ALL, 4)
+        btn_sel_all = wx.Button(self.page_commit, label="Select all")
+        btn_sel_none = wx.Button(self.page_commit, label="Select none")
+        btn_sel_all.Bind(wx.EVT_BUTTON, lambda evt: self._set_all_exports(True))
+        btn_sel_none.Bind(wx.EVT_BUTTON, lambda evt: self._set_all_exports(False))
 
-        self.chk_export.Bind(wx.EVT_CHECKBOX, lambda evt: self._sync_export_enable())
+        sel_row = wx.BoxSizer(wx.HORIZONTAL)
+        sel_row.Add(btn_sel_all, 0, wx.ALL, 4)
+        sel_row.Add(btn_sel_none, 0, wx.ALL, 4)
+        sel_row.AddStretchSpacer(1)
+        exports_box.Add(sel_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 2)
+
+        grid = wx.FlexGridSizer(cols=2, vgap=4, hgap=12)
+        for chk in (
+            self.chk_pdf,
+            self.chk_bom,
+            self.chk_layers_svg,
+            self.chk_gerbers,
+            self.chk_drill,
+            self.chk_images,
+            self.chk_step,
+            self.chk_glb,
+        ):
+            grid.Add(chk, 0, wx.ALL, 4)
+        exports_box.Add(grid, 0, wx.EXPAND | wx.ALL, 2)
+
+        self.chk_export.Bind(wx.EVT_CHECKBOX, lambda evt: (self._sync_export_enable(), self._persist_export_settings()))
         self.chk_drc = wx.CheckBox(self.page_commit, label="DRC guard (block commit if DRC violations exist)")
         self.chk_drc.SetValue(False)
+        self.chk_drc.Bind(wx.EVT_CHECKBOX, lambda evt: self._persist_export_settings())
+
+        for chk in (
+            self.chk_pdf,
+            self.chk_bom,
+            self.chk_layers_svg,
+            self.chk_gerbers,
+            self.chk_drill,
+            self.chk_images,
+            self.chk_step,
+            self.chk_glb,
+        ):
+            chk.Bind(wx.EVT_CHECKBOX, lambda evt: self._persist_export_settings())
 
         # Smart footer is always enabled (no checkbox).
 
@@ -428,7 +478,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
         info = wx.StaticText(
             self.page_commit,
-            label="Tip: A footer like [Version: v1.0.N] [Date: YYYY-MM-DD HH:MM:SS] is appended automatically.",
+            label="Tip: A footer like [Revision: REV-N] [Date: YYYY-MM-DD HH:MM:SS] is appended automatically, and a matching Git tag is created.",
         )
 
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -444,6 +494,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         sizer.Add(info, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(btns, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         self.page_commit.SetSizer(sizer)
+        self._load_export_settings()
         self._sync_export_enable()
 
     def _sync_export_enable(self) -> None:
@@ -459,6 +510,84 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             self.chk_glb,
         ):
             chk.Enable(enabled)
+
+    def _set_all_exports(self, value: bool) -> None:
+        for chk in (
+            self.chk_pdf,
+            self.chk_bom,
+            self.chk_layers_svg,
+            self.chk_gerbers,
+            self.chk_drill,
+            self.chk_images,
+            self.chk_step,
+            self.chk_glb,
+        ):
+            try:
+                chk.SetValue(bool(value))
+            except Exception:
+                pass
+        self._persist_export_settings()
+
+    def _load_export_settings(self) -> None:
+        exp = self.settings.export if hasattr(self, "settings") else {}
+        if not isinstance(exp, dict):
+            return
+
+        def apply_bool(key: str, ctrl) -> None:
+            if key not in exp:
+                return
+            try:
+                ctrl.SetValue(bool(exp.get(key)))
+            except Exception:
+                pass
+
+        apply_bool("auto_export", self.chk_export)
+        apply_bool("run_drc_guard", self.chk_drc)
+        apply_bool("export_pdf", self.chk_pdf)
+        apply_bool("export_bom", self.chk_bom)
+        apply_bool("export_layers_svg", self.chk_layers_svg)
+        apply_bool("export_gerbers", self.chk_gerbers)
+        apply_bool("export_drill", self.chk_drill)
+        apply_bool("export_images", self.chk_images)
+        apply_bool("export_step", self.chk_step)
+        apply_bool("export_glb", self.chk_glb)
+
+    def _persist_export_settings(self) -> None:
+        if not hasattr(self, "settings"):
+            return
+        try:
+            self.settings.export.update(
+                {
+                    "auto_export": bool(self.chk_export.GetValue()),
+                    "run_drc_guard": bool(self.chk_drc.GetValue()),
+                    "export_pdf": bool(self.chk_pdf.GetValue()),
+                    "export_bom": bool(self.chk_bom.GetValue()),
+                    "export_layers_svg": bool(self.chk_layers_svg.GetValue()),
+                    "export_gerbers": bool(self.chk_gerbers.GetValue()),
+                    "export_drill": bool(self.chk_drill.GetValue()),
+                    "export_images": bool(self.chk_images.GetValue()),
+                    "export_step": bool(self.chk_step.GetValue()),
+                    "export_glb": bool(self.chk_glb.GetValue()),
+                }
+            )
+            self.settings.save(self.files.project_dir)
+        except Exception:
+            pass
+
+    def _persist_ui_settings(self) -> None:
+        if not hasattr(self, "settings"):
+            return
+        try:
+            ui = self.settings.ui
+            ui["dlg_size"] = [int(self.dlg.GetSize().GetWidth()), int(self.dlg.GetSize().GetHeight())]
+            ui["dlg_pos"] = [int(self.dlg.GetPosition().x), int(self.dlg.GetPosition().y)]
+            if hasattr(self, "_main_splitter"):
+                ui["main_sash"] = int(self._main_splitter.GetSashPosition())
+            if hasattr(self, "_timeline_splitter"):
+                ui["timeline_sash"] = int(self._timeline_splitter.GetSashPosition())
+            self.settings.save(self.files.project_dir)
+        except Exception:
+            pass
 
     def _build_branches_tab(self) -> None:
         wx = self._wx
@@ -517,6 +646,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         btns.Add(btn_copy_hash, 0, wx.ALL, 6)
 
         splitter = wx.SplitterWindow(self.page_timeline, style=wx.SP_LIVE_UPDATE)
+        self._timeline_splitter = splitter
         left = wx.Panel(splitter)
         right = wx.Panel(splitter)
 
@@ -548,6 +678,13 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         splitter.SetMinimumPaneSize(220)
         splitter.SetSashGravity(0.5)
         splitter.SplitVertically(left, right, sashPosition=420)
+        try:
+            ui = self.settings.ui if hasattr(self, "settings") else {}
+            sash = ui.get("timeline_sash") if isinstance(ui, dict) else None
+            if isinstance(sash, int):
+                splitter.SetSashPosition(sash)
+        except Exception:
+            pass
 
         top.Add(toolbar, 0, wx.EXPAND)
         top.Add(btns, 0, wx.EXPAND)
@@ -572,6 +709,47 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         remote_hz.Add(btn_set_remote, 0, wx.ALL, 6)
         
         remote_box.Add(remote_hz, 0, wx.EXPAND | wx.ALL, 6)
+
+        # Backup Settings
+        backup_box = wx.StaticBoxSizer(wx.StaticBox(self.page_sync, label="Backup (conflicts/untracked)"), wx.VERTICAL)
+        self.txt_backup_dir = wx.TextCtrl(self.page_sync)
+        try:
+            self.txt_backup_dir.SetValue(getattr(self.settings, "backup_base_dir", ".kigit-backups"))
+        except Exception:
+            self.txt_backup_dir.SetValue(".kigit-backups")
+
+        btn_pick_backup = wx.Button(self.page_sync, label="Browse…")
+
+        def on_pick_backup() -> None:
+            dlg = wx.DirDialog(self.dlg, "Select backup folder (optional; can be outside the repo)")
+            try:
+                if dlg.ShowModal() != wx.ID_OK:
+                    return
+                path = (dlg.GetPath() or "").strip()
+            finally:
+                dlg.Destroy()
+            if not path:
+                return
+            self.txt_backup_dir.SetValue(path)
+            self._on_backup_dir_changed()
+
+        btn_pick_backup.Bind(wx.EVT_BUTTON, lambda evt: on_pick_backup())
+        self.txt_backup_dir.Bind(wx.EVT_TEXT, lambda evt: self._on_backup_dir_changed())
+
+        backup_hz = wx.BoxSizer(wx.HORIZONTAL)
+        backup_hz.Add(wx.StaticText(self.page_sync, label="Backup folder:"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        backup_hz.Add(self.txt_backup_dir, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        backup_hz.Add(btn_pick_backup, 0, wx.ALL, 6)
+        backup_box.Add(backup_hz, 0, wx.EXPAND | wx.ALL, 6)
+        backup_box.Add(
+            wx.StaticText(
+                self.page_sync,
+                label="Tip: Use a relative path like .kigit-backups (inside project) or an absolute path.",
+            ),
+            0,
+            wx.LEFT | wx.RIGHT | wx.BOTTOM,
+            10,
+        )
         
         # Sync Actions (Push / Pull)
         sync_box = wx.StaticBoxSizer(wx.StaticBox(self.page_sync, label="Synchronize"), wx.HORIZONTAL)
@@ -593,6 +771,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         )
 
         sizer.Add(remote_box, 0, wx.EXPAND | wx.ALL, 8)
+        sizer.Add(backup_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(sync_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.AddStretchSpacer(1)
         sizer.Add(wx.StaticText(self.page_sync, label=info_text), 0, wx.ALL, 8)
@@ -603,6 +782,11 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         return self.dlg.ShowModal()
 
     def Destroy(self) -> None:
+        try:
+            self._persist_export_settings()
+            self._persist_ui_settings()
+        except Exception:
+            pass
         self.dlg.Destroy()
 
     def _log(self, text: str) -> None:
@@ -639,6 +823,13 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             self.txt_branch.SetLabel("")
             self.status_box.SetValue("")
             self.txt_remote_url.SetValue("")
+
+        # Backup settings (local-only)
+        try:
+            if hasattr(self, "txt_backup_dir") and hasattr(self, "settings"):
+                self.txt_backup_dir.SetValue(getattr(self.settings, "backup_base_dir", ".kigit-backups"))
+        except Exception:
+            pass
 
         from .kicad_cli import KiCadCli, KiCadCliNotFound
 
@@ -687,8 +878,8 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         if resp_ig == wx.YES:
             template_path = Path(__file__).resolve().parent / "gitignore_template.txt"
             template_text = template_path.read_text(encoding="utf-8")
-            created = self.git.ensure_gitignore(template_text)
-            self._log("Created .gitignore." if created else ".gitignore already exists.")
+            changed = self.git.ensure_gitignore(template_text)
+            self._log("Updated .gitignore." if changed else ".gitignore already has KiGit rules.")
 
         # Mandatory remote setup + connectivity check (first-time).
         self.notebook.SetSelection(4)  # Sync tab index: Overview, Commit, Branches, Timeline, Sync
@@ -825,10 +1016,13 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             from .kicad_cli import KiCadCli
 
             cli = KiCadCli.detect()
+            revision = self.git.next_revision() if self.git.is_git_repo() else "WORKING"
             cli.export_artifacts(
                 project_dir=self.files.project_dir,
                 schematic_file=self.files.schematic_file,
                 board_file=self.files.board_file,
+                revision=revision,
+                clean_output=True,
                 export_pdf=export_pdf,
                 export_bom=export_bom,
                 export_layers_svg=export_layers_svg,
@@ -838,7 +1032,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
                 export_step=export_step,
                 export_glb=export_glb,
             )
-            self._log("Export complete: git-exports/")
+            self._log(f"Export complete: git-exports/{revision}/")
 
         try:
             self._run_with_busy(work, "Running exports…")
@@ -1057,6 +1251,16 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         except Exception as exc:
             wx.MessageBox(str(exc), "KiGit", wx.OK | wx.ICON_ERROR)
 
+    def _on_backup_dir_changed(self) -> None:
+        if not hasattr(self, "settings") or not hasattr(self, "txt_backup_dir"):
+            return
+        try:
+            val = (self.txt_backup_dir.GetValue() or "").strip() or ".kigit-backups"
+            self.settings.backup_base_dir = val
+            self.settings.save(self.files.project_dir)
+        except Exception:
+            pass
+
     def _on_push(self) -> None:
         wx = self._wx
         if not self.git.is_git_repo():
@@ -1080,7 +1284,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             out_holder: dict[str, str] = {"out": ""}
 
             def work():
-                out_holder["out"] = self.git.push(include_tags=False)
+                out_holder["out"] = self.git.push(include_tags=True)
 
             self._run_with_busy(work, "Pushing to remote…")
             self._log(f"Push successful:\n{out_holder['out']}")
@@ -1106,7 +1310,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
                             self._run_with_busy(lambda: self.git.pull_rebase(), "Pulling (rebase)…")
                         else:
                             self._run_with_busy(lambda: self.git.pull_merge(), "Pulling (merge)…")
-                        self._run_with_busy(lambda: self.git.push(include_tags=False), "Pushing…")
+                        self._run_with_busy(lambda: self.git.push(include_tags=True), "Pushing…")
                         wx.MessageBox("Sync completed successfully.", "KiGit", wx.OK | wx.ICON_INFORMATION)
                         self.refresh()
                         return
@@ -1138,10 +1342,11 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         # Pulling from a non-empty remote requires checking out remote branch, which can overwrite untracked files.
         if not self.git.has_commits() and self.git.has_untracked_files():
             untracked = self.git.list_untracked_paths()
+            backup_base = self.settings.resolved_backup_base_dir(self.files.project_dir) if hasattr(self, "settings") else Path(self.files.project_dir) / ".kigit-backups"
             msg = (
                 "This repo has no local commits yet, but there are local untracked files.\n\n"
                 "Pulling from the remote will replace files in this folder.\n\n"
-                "Do you want KiGit to BACK UP your local files to .kigit-backups/ and then pull?"
+                f"Do you want KiGit to BACK UP your local files to:\n{backup_base}\n\nand then pull?"
             )
             resp2 = wx.MessageBox(msg, "KiGit", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
             if resp2 != wx.YES:
@@ -1150,7 +1355,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             from datetime import datetime
             from pathlib import Path
 
-            backup_dir = Path(self.files.project_dir) / ".kigit-backups" / f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            backup_dir = Path(backup_base) / f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             try:
                 moved = self.git.backup_paths(untracked, str(backup_dir))
                 self._log(f"Backed up {len(moved)} files to: {backup_dir}")
@@ -1176,16 +1381,17 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             # Handle untracked overwrite case with a backup option (even for non-empty repos).
             if "untracked working tree files would be overwritten" in err.lower():
                 untracked = self.git.list_untracked_paths()
+                backup_base = self.settings.resolved_backup_base_dir(self.files.project_dir) if hasattr(self, "settings") else Path(self.files.project_dir) / ".kigit-backups"
                 msg = (
                     "Git refused to pull because local untracked files would be overwritten.\n\n"
-                    "Do you want KiGit to back them up into .kigit-backups/ and retry?"
+                    f"Do you want KiGit to back them up to:\n{backup_base}\n\nand retry?"
                 )
                 resp2 = wx.MessageBox(msg, "KiGit", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
                 if resp2 == wx.YES:
                     from datetime import datetime
                     from pathlib import Path
 
-                    backup_dir = Path(self.files.project_dir) / ".kigit-backups" / f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                    backup_dir = Path(backup_base) / f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
                     try:
                         moved = self.git.backup_paths(untracked, str(backup_dir))
                         self._log(f"Backed up {len(moved)} files to: {backup_dir}")

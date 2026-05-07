@@ -31,5 +31,11 @@ fp-info-cache
 # KiGit can auto-export artifacts into `git-exports/` and commit them.
 # If you prefer NOT to version exports, add rules like:
 #   git-exports/
+
+# Local-only KiGit settings (do not commit)
+.kigit/
+
+# KiGit local conflict backups (do not commit)
+# .kigit-backups/
 #   *.csv
 #   *.pdf

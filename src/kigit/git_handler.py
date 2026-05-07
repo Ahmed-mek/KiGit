@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -179,30 +178,40 @@ class GitHandler:
         res = self._run(args, cwd=self._repo_cwd())
         return res.stdout
 
-    def next_version_from_messages(self, *, major: int = 1, minor: int = 0, search_limit: int = 500) -> str:
-        """
-        Derive the next version from previous commit messages, looking for:
-          [Version: v<major>.<minor>.<patch>]
-
-        This avoids relying on git tags (which users may not want to create/push).
-        """
-        pattern = re.compile(rf"\\[Version:\\s*v{major}\\.{minor}\\.(\\d+)\\]")
+    def commit_count(self) -> int:
+        if not self.has_commits():
+            return 0
         try:
-            res = self._run(
-                ["log", f"-n{search_limit}", "--pretty=format:%B%n----END----"],
-                cwd=self._repo_cwd(),
-            )
-            text = res.stdout
-        except GitError:
-            text = ""
+            res = self._run(["rev-list", "--count", "HEAD"], cwd=self._repo_cwd())
+            return int((res.stdout or "").strip() or "0")
+        except Exception:
+            return 0
 
-        max_patch = 0
-        for m in pattern.finditer(text):
-            try:
-                max_patch = max(max_patch, int(m.group(1)))
-            except Exception:
-                continue
-        return f"v{major}.{minor}.{max_patch + 1}"
+    def next_revision(self) -> str:
+        """
+        Hardware-style revision: REV-<N>, derived from commit count.
+        If repo has 14 commits, next revision is REV-15.
+        """
+        return f"REV-{self.commit_count() + 1}"
+
+    def tag_exists(self, name: str) -> bool:
+        name = (name or "").strip()
+        if not name:
+            return False
+        try:
+            self._run(["show-ref", "--tags", "--verify", "--quiet", f"refs/tags/{name}"], cwd=self._repo_cwd())
+            return True
+        except GitError:
+            return False
+
+    def create_annotated_tag(self, name: str, message: str | None = None) -> None:
+        name = (name or "").strip()
+        if not name:
+            raise GitError("Tag name is empty")
+        if self.tag_exists(name):
+            return
+        msg = (message or name).strip() or name
+        self._run(["tag", "-a", name, "-m", msg], cwd=self._repo_cwd())
 
     def show_summary(self, rev: str) -> str:
         res = self._run(["show", "--no-patch", "--stat", "--decorate", rev], cwd=self._repo_cwd())
@@ -232,13 +241,33 @@ class GitHandler:
 
     def ensure_gitignore(self, template_text: str) -> bool:
         """
-        Writes .gitignore if missing. Returns True if created.
+        Writes .gitignore if missing, otherwise ensures KiGit ignore entries exist.
+        Returns True if created or modified.
         """
         path = Path(self._repo_cwd()) / ".gitignore"
-        if path.exists():
+        if not path.exists():
+            path.write_text(template_text, encoding="utf-8")
+            return True
+
+        try:
+            existing = path.read_text(encoding="utf-8")
+        except Exception:
             return False
-        path.write_text(template_text, encoding="utf-8")
-        return True
+
+        needed = [".kigit/", ".kigit-backups/"]
+        to_add: list[str] = []
+        for entry in needed:
+            if entry not in existing:
+                to_add.append(entry)
+        if not to_add:
+            return False
+
+        try:
+            suffix = ("\n" if not existing.endswith("\n") else "") + "\n".join(to_add) + "\n"
+            path.write_text(existing + suffix, encoding="utf-8")
+            return True
+        except Exception:
+            return False
 
     def get_remote_url(self, remote_name: str = "origin") -> str:
         try:
@@ -303,6 +332,13 @@ class GitHandler:
         for rel in rel_paths:
             rel = (rel or "").strip()
             if not rel or rel.startswith(".git/") or rel == ".git":
+                continue
+            # Never back up KiGit generated folders; they can be regenerated.
+            if rel == "git-exports" or rel.startswith("git-exports/") or rel.startswith("git-exports\\"):
+                continue
+            if rel == ".kigit-backups" or rel.startswith(".kigit-backups/") or rel.startswith(".kigit-backups\\"):
+                continue
+            if rel == ".kigit" or rel.startswith(".kigit/") or rel.startswith(".kigit\\"):
                 continue
             src = root / rel
             if not src.exists():

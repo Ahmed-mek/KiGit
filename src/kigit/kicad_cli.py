@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
@@ -86,6 +87,8 @@ class KiCadCli:
         project_dir: str,
         schematic_file: Optional[str],
         board_file: Optional[str],
+        revision: Optional[str] = None,
+        clean_output: bool = True,
         export_pdf: bool = True,
         export_bom: bool = True,
         export_layers_svg: bool = True,
@@ -96,40 +99,97 @@ class KiCadCli:
         export_glb: bool = False,
     ) -> None:
         """
-        Phase 2: Auto-export artifacts into `git-exports/`.
+        Phase 2+: Auto-export artifacts into `git-exports/`.
+        When revision is provided, exports go to `git-exports/<REV>/`.
         - schematic_file: root schematic (*.kicad_sch)
         - board_file: board (*.kicad_pcb)
         """
         pdir = Path(project_dir)
-        out_dir = pdir / "git-exports"
-        out_dir.mkdir(parents=True, exist_ok=True)
+        base_dir = pdir / "git-exports"
+        out_root = base_dir / revision if revision else base_dir
+
+        if clean_output and out_root.exists():
+            # Only ever delete within the project `git-exports/` tree.
+            try:
+                out_root_resolved = str(out_root.resolve())
+                base_resolved = str(base_dir.resolve())
+                if out_root_resolved == base_resolved or out_root_resolved.startswith(base_resolved + os.sep):
+                    shutil.rmtree(out_root)
+            except Exception:
+                # If safety checks fail, fall back to best-effort cleanup of known subfolders.
+                for name in ("schematic", "pcb", "manufacturing", "3d", "reports"):
+                    try:
+                        shutil.rmtree(out_root / name)
+                    except Exception:
+                        pass
+
+        out_root.mkdir(parents=True, exist_ok=True)
+        sch_dir = out_root / "schematic"
+        pcb_dir = out_root / "pcb"
+        mfg_dir = out_root / "manufacturing"
+        three_d_dir = out_root / "3d"
+        reports_dir = out_root / "reports"
+
+        sch_dir.mkdir(parents=True, exist_ok=True)
+        pcb_dir.mkdir(parents=True, exist_ok=True)
+        mfg_dir.mkdir(parents=True, exist_ok=True)
+        three_d_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        def _rev_suffix() -> str:
+            return f"_{revision}" if revision else ""
+
+        def _board_stem() -> str:
+            try:
+                return Path(board_file).stem if board_file else "board"
+            except Exception:
+                return "board"
+
+        def _sch_stem() -> str:
+            try:
+                return Path(schematic_file).stem if schematic_file else "schematic"
+            except Exception:
+                return "schematic"
 
         if schematic_file and export_pdf:
-            self.export_schematic_pdf(schematic_file, str(out_dir / "schematic.pdf"))
+            self.export_schematic_pdf(schematic_file, str(sch_dir / f"{_sch_stem()}_schematic{_rev_suffix()}.pdf"))
         if schematic_file and export_bom:
-            self.export_bom_csv(schematic_file, str(out_dir / "bom.csv"))
+            self.export_bom_csv(schematic_file, str(sch_dir / f"{_sch_stem()}_bom{_rev_suffix()}.csv"))
 
         if board_file:
             # Prep for Phase 3 (visual diff): plot key layers to SVG.
             if export_layers_svg:
                 self.export_pcb_layers_svg(
                     board_file,
-                    str(out_dir / "layers_svg"),
+                    str(pcb_dir / f"layers_svg{_rev_suffix()}"),
                     layers=["F.Cu", "B.Cu", "F.SilkS", "B.SilkS", "Edge.Cuts"],
                 )
 
             # Phase 2 requested outputs: Gerbers + drill + a quick visual render.
             if export_gerbers:
-                self.export_gerbers(board_file, str(out_dir / "gerbers"))
+                self.export_gerbers(board_file, str(mfg_dir / f"gerbers{_rev_suffix()}"))
             if export_drill:
-                self.export_drill(board_file, str(out_dir / "drill"))
+                self.export_drill(board_file, str(mfg_dir / f"drill{_rev_suffix()}"))
             if export_images:
-                self.render_pcb_image(board_file, str(out_dir / "pcb_top.png"), side="top")
-                self.render_pcb_image(board_file, str(out_dir / "pcb_bottom.png"), side="bottom")
+                self.render_pcb_image(board_file, str(pcb_dir / f"{_board_stem()}_top{_rev_suffix()}.png"), side="top")
+                self.render_pcb_image(board_file, str(pcb_dir / f"{_board_stem()}_bottom{_rev_suffix()}.png"), side="bottom")
             if export_step:
-                self.export_step(board_file, str(out_dir / "board.step"))
+                self.export_step(board_file, str(three_d_dir / f"{_board_stem()}{_rev_suffix()}.step"))
             if export_glb:
-                self.export_glb(board_file, str(out_dir / "board.glb"))
+                self.export_glb(board_file, str(three_d_dir / f"{_board_stem()}{_rev_suffix()}.glb"))
+
+            # Convenience: create a fab ZIP containing gerbers + drill (when present).
+            try:
+                zip_name = f"{_board_stem()}_fab{_rev_suffix()}.zip"
+                zip_path = out_root / zip_name
+                with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for p in sorted(mfg_dir.rglob("*")):
+                        if p.is_dir():
+                            continue
+                        arc = p.relative_to(out_root).as_posix()
+                        zf.write(p, arcname=arc)
+            except Exception:
+                pass
 
     def export_schematic_pdf(self, schematic_file: str, out_pdf: str) -> None:
         self._run(["sch", "export", "pdf", "--output", out_pdf, schematic_file])

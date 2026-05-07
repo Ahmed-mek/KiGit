@@ -21,6 +21,7 @@ def smart_commit(
       - git add + commit
     """
     notes: list[str] = []
+    revision = handler.next_revision()
     cli = None
     if options.auto_export or options.run_drc_guard:
         try:
@@ -38,7 +39,7 @@ def smart_commit(
         from pathlib import Path
 
         pdir = Path(handler.project_dir)
-        report_path = pdir / "git-exports" / "drc_report.txt"
+        report_path = pdir / "git-exports" / revision / "reports" / f"drc_report_{revision}.txt"
         ok = cli.run_pcb_drc_report(board_file, str(report_path))
         if not ok:
             raise RuntimeError(f"DRC violations found. See: {report_path}")
@@ -53,6 +54,8 @@ def smart_commit(
                 project_dir=handler.project_dir,
                 schematic_file=schematic_file,
                 board_file=board_file,
+                revision=revision,
+                clean_output=True,
                 export_pdf=bool(getattr(options, "export_pdf", True)),
                 export_bom=bool(getattr(options, "export_bom", True)),
                 export_layers_svg=bool(getattr(options, "export_layers_svg", True)),
@@ -68,23 +71,28 @@ def smart_commit(
     handler.add_all()
 
     commit_msg = options.message
-    footer_version = ""
+    footer_revision = ""
 
-    # Always-on smart footer (requested): append version+date without requiring tags.
+    # Always-on smart footer: append revision+date, and create a matching git tag.
     if True:
         from datetime import datetime
 
-        footer_version = handler.next_version_from_messages(major=1, minor=0)
+        footer_revision = revision
         footer_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        commit_msg = f"{commit_msg.strip()}\n\n[Version: {footer_version}] [Date: {footer_date}]"
+        commit_msg = f"{commit_msg.strip()}\n\n[Revision: {footer_revision}] [Date: {footer_date}]"
 
     commit_hash = handler.commit(commit_msg)
     if not commit_hash:
         msg = "No changes to commit"
     else:
         msg = f"Committed: {commit_hash}"
-        if footer_version:
-            msg += f" ({footer_version})"
+        if footer_revision:
+            try:
+                handler.create_annotated_tag(footer_revision, message=f"KiGit {footer_revision}")
+                notes.append(f"Tag created: {footer_revision}")
+            except Exception as exc:
+                notes.append(f"Tag skipped ({exc})")
+            msg += f" ({footer_revision})"
     if notes:
         msg = msg + "\n\n" + "\n".join(notes)
     return msg
