@@ -1016,7 +1016,8 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             from .kicad_cli import KiCadCli
 
             cli = KiCadCli.detect()
-            revision = self.git.next_revision() if self.git.is_git_repo() else "WORKING"
+            revision = getattr(self.settings, "last_revision", "") if hasattr(self, "settings") else ""
+            revision = (revision or "").strip() or "WORKING"
             cli.export_artifacts(
                 project_dir=self.files.project_dir,
                 schematic_file=self.files.schematic_file,

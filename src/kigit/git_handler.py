@@ -204,7 +204,7 @@ class GitHandler:
         except GitError:
             return False
 
-    def create_annotated_tag(self, name: str, message: str | None = None) -> None:
+    def create_annotated_tag(self, name: str, message: Optional[str] = None) -> None:
         name = (name or "").strip()
         if not name:
             raise GitError("Tag name is empty")

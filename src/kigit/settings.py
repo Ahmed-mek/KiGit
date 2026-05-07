@@ -26,6 +26,7 @@ def _is_abs(p: str) -> bool:
 class KiGitSettings:
     export: dict[str, bool] = field(default_factory=dict)
     backup_base_dir: str = ".kigit-backups"
+    last_revision: str = ""
     ui: dict[str, Any] = field(default_factory=dict)
 
     def resolved_backup_base_dir(self, project_dir: str) -> Path:
@@ -46,11 +47,13 @@ class KiGitSettings:
 
         export = data.get("export") if isinstance(data, dict) else None
         backup_base_dir = data.get("backup_base_dir") if isinstance(data, dict) else None
+        last_revision = data.get("last_revision") if isinstance(data, dict) else None
         ui = data.get("ui") if isinstance(data, dict) else None
 
         return cls(
             export=dict(export) if isinstance(export, dict) else {},
             backup_base_dir=str(backup_base_dir) if isinstance(backup_base_dir, str) else ".kigit-backups",
+            last_revision=str(last_revision) if isinstance(last_revision, str) else "",
             ui=dict(ui) if isinstance(ui, dict) else {},
         )
 
@@ -61,7 +64,7 @@ class KiGitSettings:
         payload = {
             "export": dict(self.export),
             "backup_base_dir": self.backup_base_dir,
+            "last_revision": self.last_revision,
             "ui": dict(self.ui),
         }
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
