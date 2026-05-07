@@ -28,6 +28,18 @@ python3 scripts/build_pcm_zip.py --version 0.1.0
 
 The ZIP artifact is written to `dist/`.
 
+## Dev install shortcut (KiCad 10, Linux)
+
+If you want rapid iteration without re-installing the ZIP each time, create a symlink from KiCad’s PCM plugin folder to the staged plugin files:
+
+```bash
+python3 scripts/build_pcm_zip.py --version 0.3.0
+bash scripts/install_kicad_dev_link.sh
+```
+
+This creates a dev entry under:
+`~/.local/share/kicad/10.0/3rdparty/plugins/com_github_ahmedmikatonikpc_kigit_dev`
+
 ## Install in KiCad (manual, for SWIG action plugins)
 
 Copy the *contents* of the ZIP’s `plugins/` directory into your KiCad scripting plugins folder (paths vary by KiCad version/OS).

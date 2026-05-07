@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import traceback
 from pathlib import Path
 
 
@@ -57,13 +58,20 @@ if _in_kicad():
             if consent != wx.YES:
                 return
 
-        try:
-            run_kigit_flow(project_dir, board_path)
-        except Exception as exc:
-            wx.MessageBox(
-                f"KiGit failed.\n\n{exc}",
-                "KiGit",
-                wx.OK | wx.ICON_ERROR,
+            try:
+                run_kigit_flow(project_dir, board_path)
+            except Exception as exc:
+                details = traceback.format_exc()
+                log_path = Path(project_dir) / "git-exports" / "kigit_error.txt"
+                try:
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    log_path.write_text(details, encoding="utf-8")
+                except Exception:
+                    log_path = Path("")
+                wx.MessageBox(
+                    f"KiGit failed.\n\n{exc}\n\nDetails: {log_path}" if str(log_path) else f"KiGit failed.\n\n{exc}",
+                    "KiGit",
+                    wx.OK | wx.ICON_ERROR,
                 )
 
 else:
