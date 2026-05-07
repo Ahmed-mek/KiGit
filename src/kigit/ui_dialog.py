@@ -984,14 +984,56 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             pass
 
     def _run_with_busy(self, fn, label: str) -> None:
+        """
+        Run a potentially long task while keeping the UI responsive.
+        Shows an indeterminate progress bar instead of freezing the window.
+
+        NOTE: `fn` must NOT touch wx UI objects. Do UI updates after this returns.
+        """
         wx = self._wx
         self._log(label)
-        wx.BeginBusyCursor()
+
+        import threading
+
+        state: dict[str, object] = {"exc": None}
+
+        def worker() -> None:
+            try:
+                fn()
+            except Exception as exc:  # noqa: BLE001
+                state["exc"] = exc
+
+        t = threading.Thread(target=worker, daemon=True)
+
+        dlg = wx.ProgressDialog(
+            "KiGit",
+            label,
+            maximum=100,
+            parent=self.dlg,
+            style=wx.PD_APP_MODAL | wx.PD_ELAPSED_TIME | wx.PD_SMOOTH,
+        )
         try:
-            fn()
+            t.start()
+            # Pulse until the worker is done, while yielding to the UI loop.
+            while t.is_alive():
+                try:
+                    dlg.Pulse(label)
+                except Exception:
+                    pass
+                wx.MilliSleep(120)
+                try:
+                    wx.YieldIfNeeded()
+                except Exception:
+                    pass
         finally:
-            if wx.IsBusy():
-                wx.EndBusyCursor()
+            try:
+                dlg.Destroy()
+            except Exception:
+                pass
+
+        exc = state.get("exc")
+        if exc is not None:
+            raise exc  # type: ignore[misc]
 
     def _on_export_only(self) -> None:
         wx = self._wx
@@ -1033,10 +1075,17 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
                 export_step=export_step,
                 export_glb=export_glb,
             )
-            self._log(f"Export complete: git-exports/{revision}/")
+            return revision
 
         try:
-            self._run_with_busy(work, "Running exports…")
+            out_holder: dict[str, str] = {"rev": ""}
+
+            def work2():
+                out_holder["rev"] = work() or ""
+
+            self._run_with_busy(work2, "Running exports…")
+            if out_holder["rev"]:
+                self._log(f"Export complete: git-exports/{out_holder['rev']}/")
             self.refresh()
         except Exception as exc:
             wx.MessageBox(str(exc), "KiGit Export Failed", wx.OK | wx.ICON_ERROR)
@@ -1057,16 +1106,22 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             from .gitops import smart_commit
 
             opts = self._collect_commit_options(force_export=force_export)
-            result = smart_commit(
+            return smart_commit(
                 self.git,
                 opts,
                 board_file=self.files.board_file,
                 schematic_file=self.files.schematic_file,
             )
-            self._log(result)
 
         try:
-            self._run_with_busy(work, "Committing…")
+            out_holder: dict[str, str] = {"out": ""}
+
+            def work2():
+                out_holder["out"] = work() or ""
+
+            self._run_with_busy(work2, "Committing…")
+            if out_holder["out"]:
+                self._log(out_holder["out"])
             self.refresh()
         except Exception as exc:
             wx.MessageBox(str(exc), "KiGit Commit Failed", wx.OK | wx.ICON_ERROR)
