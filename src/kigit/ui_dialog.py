@@ -55,10 +55,12 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.page_overview = wx.Panel(self.notebook)
         self.page_commit = wx.Panel(self.notebook)
         self.page_branches = wx.Panel(self.notebook)
+        self.page_timeline = wx.Panel(self.notebook)
 
         self.notebook.AddPage(self.page_overview, "Overview")
         self.notebook.AddPage(self.page_commit, "Commit")
         self.notebook.AddPage(self.page_branches, "Branches")
+        self.notebook.AddPage(self.page_timeline, "Timeline")
 
         self.log = wx.TextCtrl(self.dlg, style=wx.TE_MULTILINE | wx.TE_READONLY)
         self.log.SetMinSize((-1, 140))
@@ -85,6 +87,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self._build_overview_tab()
         self._build_commit_tab()
         self._build_branches_tab()
+        self._build_timeline_tab()
 
     def _build_overview_tab(self) -> None:
         wx = self._wx
@@ -236,6 +239,74 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         sizer.Add(btns, 0, wx.EXPAND | wx.ALL, 6)
         self.page_branches.SetSizer(sizer)
 
+    def _build_timeline_tab(self) -> None:
+        wx = self._wx
+
+        top = wx.BoxSizer(wx.VERTICAL)
+
+        self.chk_all_branches = wx.CheckBox(self.page_timeline, label="Show all branches")
+        self.chk_all_branches.SetValue(True)
+
+        self.spin_count = wx.SpinCtrl(self.page_timeline, min=10, max=500, initial=80)
+
+        toolbar = wx.BoxSizer(wx.HORIZONTAL)
+        toolbar.Add(self.chk_all_branches, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        toolbar.AddStretchSpacer(1)
+        toolbar.Add(wx.StaticText(self.page_timeline, label="Max commits"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        toolbar.Add(self.spin_count, 0, wx.ALL, 6)
+
+        self.graph_box = wx.TextCtrl(
+            self.page_timeline,
+            style=wx.TE_MULTILINE | wx.TE_READONLY,
+        )
+        self.graph_box.SetFont(wx.Font(10, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+
+        self.commits = wx.ListCtrl(self.page_timeline, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
+        self.commits.InsertColumn(0, "Hash", width=80)
+        self.commits.InsertColumn(1, "Date", width=160)
+        self.commits.InsertColumn(2, "Author", width=140)
+        self.commits.InsertColumn(3, "Message", width=520)
+        self.commits.Bind(wx.EVT_LIST_ITEM_SELECTED, lambda evt: self._on_select_commit())
+
+        self.details = wx.TextCtrl(self.page_timeline, style=wx.TE_MULTILINE | wx.TE_READONLY)
+
+        btn_refresh = wx.Button(self.page_timeline, label="Refresh")
+        btn_diff_parent = wx.Button(self.page_timeline, label="Diff to parent")
+        btn_copy_hash = wx.Button(self.page_timeline, label="Copy hash")
+
+        btn_refresh.Bind(wx.EVT_BUTTON, lambda evt: self._refresh_timeline())
+        btn_diff_parent.Bind(wx.EVT_BUTTON, lambda evt: self._show_diff_to_parent())
+        btn_copy_hash.Bind(wx.EVT_BUTTON, lambda evt: self._copy_selected_hash())
+
+        btns = wx.BoxSizer(wx.HORIZONTAL)
+        btns.Add(btn_refresh, 0, wx.ALL, 6)
+        btns.Add(btn_diff_parent, 0, wx.ALL, 6)
+        btns.AddStretchSpacer(1)
+        btns.Add(btn_copy_hash, 0, wx.ALL, 6)
+
+        splitter = wx.SplitterWindow(self.page_timeline, style=wx.SP_LIVE_UPDATE)
+        left = wx.Panel(splitter)
+        right = wx.Panel(splitter)
+
+        left_s = wx.BoxSizer(wx.VERTICAL)
+        left_s.Add(wx.StaticText(left, label="Graph"), 0, wx.ALL, 6)
+        left_s.Add(self.graph_box, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
+        left_s.Add(wx.StaticText(left, label="Commits"), 0, wx.ALL, 6)
+        left_s.Add(self.commits, 2, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        left.SetSizer(left_s)
+
+        right_s = wx.BoxSizer(wx.VERTICAL)
+        right_s.Add(wx.StaticText(right, label="Details"), 0, wx.ALL, 6)
+        right_s.Add(self.details, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        right.SetSizer(right_s)
+
+        splitter.SplitVertically(left, right, sashPosition=420)
+
+        top.Add(toolbar, 0, wx.EXPAND)
+        top.Add(btns, 0, wx.EXPAND)
+        top.Add(splitter, 1, wx.EXPAND | wx.ALL, 6)
+        self.page_timeline.SetSizer(top)
+
     def ShowModal(self) -> int:
         return self.dlg.ShowModal()
 
@@ -281,6 +352,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             self.txt_cli.SetLabel("not found")
 
         self._refresh_branches()
+        self._refresh_timeline()
         wx.CallAfter(self.dlg.Layout)
 
     def _refresh_branches(self) -> None:
@@ -476,3 +548,82 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             self.refresh()
         except Exception as exc:
             wx.MessageBox(str(exc), "KiGit", wx.OK | wx.ICON_ERROR)
+
+    def _refresh_timeline(self) -> None:
+        if not self.git.is_git_repo():
+            self.graph_box.SetValue("(not a git repo)")
+            self.commits.DeleteAllItems()
+            self.details.SetValue("")
+            return
+
+        all_branches = bool(self.chk_all_branches.GetValue())
+        max_commits = int(self.spin_count.GetValue())
+        try:
+            self.graph_box.SetValue(self.git.log_graph(max_count=max_commits, all_branches=all_branches))
+        except Exception as exc:
+            self.graph_box.SetValue(f"(log error) {exc}")
+
+        self.commits.DeleteAllItems()
+        try:
+            tsv = self.git.log_commits_tsv(max_count=max_commits, all_branches=all_branches)
+        except Exception as exc:
+            self.details.SetValue(f"(log error) {exc}")
+            return
+
+        for row in tsv.splitlines():
+            parts = row.split("\t")
+            if len(parts) < 5:
+                continue
+            short_hash, date, author, decorations, subject = parts[0], parts[1], parts[2], parts[3], parts[4]
+            idx = self.commits.InsertItem(self.commits.GetItemCount(), short_hash)
+            self.commits.SetItem(idx, 1, date)
+            self.commits.SetItem(idx, 2, author)
+            msg = subject
+            if decorations.strip():
+                msg = f"{subject} {decorations.strip()}"
+            self.commits.SetItem(idx, 3, msg)
+
+        if self.commits.GetItemCount() > 0 and self.commits.GetFirstSelected() == -1:
+            self.commits.Select(0)
+            self._on_select_commit()
+
+    def _selected_hash(self) -> Optional[str]:
+        idx = self.commits.GetFirstSelected()
+        if idx == -1:
+            return None
+        return self.commits.GetItemText(idx) or None
+
+    def _on_select_commit(self) -> None:
+        rev = self._selected_hash()
+        if not rev:
+            self.details.SetValue("")
+            return
+        try:
+            self.details.SetValue(self.git.show_summary(rev))
+        except Exception as exc:
+            self.details.SetValue(f"(show error) {exc}")
+
+    def _show_diff_to_parent(self) -> None:
+        wx = self._wx
+        rev = self._selected_hash()
+        if not rev:
+            wx.MessageBox("Select a commit first.", "KiGit", wx.OK | wx.ICON_INFORMATION)
+            return
+        try:
+            diff_text = self.git.diff_to_parent(rev)
+        except Exception as exc:
+            wx.MessageBox(str(exc), "KiGit", wx.OK | wx.ICON_ERROR)
+            return
+        # Show diff in-place (can be big).
+        self.details.SetValue(diff_text or "(no diff)")
+
+    def _copy_selected_hash(self) -> None:
+        wx = self._wx
+        rev = self._selected_hash()
+        if not rev:
+            return
+        if wx.TheClipboard.Open():
+            try:
+                wx.TheClipboard.SetData(wx.TextDataObject(rev))
+            finally:
+                wx.TheClipboard.Close()

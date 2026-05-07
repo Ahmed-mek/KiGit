@@ -123,6 +123,39 @@ class GitHandler:
         res = self._run(["branch", "--format=%(refname:short)"], cwd=self._repo_cwd())
         return [line.strip() for line in res.stdout.splitlines() if line.strip()]
 
+    def log_graph(self, *, max_count: int = 50, all_branches: bool = True) -> str:
+        args = ["log", "--graph", "--oneline", "--decorate"]
+        if all_branches:
+            args.append("--all")
+        args += ["-n", str(max_count)]
+        res = self._run(args, cwd=self._repo_cwd())
+        return res.stdout
+
+    def log_commits_tsv(self, *, max_count: int = 100, all_branches: bool = True) -> str:
+        """
+        Returns tab-separated rows:
+          short_hash \\t iso_date \\t author \\t decorations \\t subject
+        """
+        fmt = "%h%x09%ad%x09%an%x09%d%x09%s"
+        args = ["log", f"--pretty=format:{fmt}", "--date=iso"]
+        if all_branches:
+            args.append("--all")
+        args += ["-n", str(max_count)]
+        res = self._run(args, cwd=self._repo_cwd())
+        return res.stdout
+
+    def show_summary(self, rev: str) -> str:
+        res = self._run(["show", "--no-patch", "--stat", "--decorate", rev], cwd=self._repo_cwd())
+        return res.stdout
+
+    def diff_range(self, rev_a: str, rev_b: str) -> str:
+        res = self._run(["diff", f"{rev_a}..{rev_b}"], cwd=self._repo_cwd())
+        return res.stdout
+
+    def diff_to_parent(self, rev: str) -> str:
+        # Handles merge commits too; keeps it simple for now.
+        return self.diff_range(f"{rev}^", rev)
+
     def create_branch(self, name: str, checkout: bool = False) -> None:
         name = (name or "").strip()
         if not name:
