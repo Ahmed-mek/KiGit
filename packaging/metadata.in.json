@@ -3,7 +3,7 @@
   "name": "KiGit",
   "description": "Git workflows and automation for KiCad projects.",
   "description_full": "KiGit helps manage KiCad projects with Git: initialize repos, commit changes with consistent messages, auto-export manufacturing and review artifacts via kicad-cli, and sync with a remote repository.",
-  "identifier": "com.github.ahmed_mek.kigit",
+  "identifier": "com-github-ahmed-mek-kigit",
   "type": "plugin",
   "author": {
     "name": "Ahmed Mek",
@@ -27,7 +27,7 @@
   "tags": ["git", "version-control", "automation", "kicad-cli"],
   "versions": [
     {
-      "version": "0.4.14",
+      "version": "0.4.15",
       "status": "stable",
       "kicad_version": "8.0",
       "kicad_version_max": "10.99",
