@@ -19,6 +19,9 @@ fp-info-cache
 .history
 *.kicad_prl
 
+# KiGit local backups (created during safe pull/merge)
+.kigit-backups/
+
 # Netlist and autorouter exports
 *.net
 *.dsn

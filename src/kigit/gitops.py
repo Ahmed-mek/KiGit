@@ -66,29 +66,25 @@ def smart_commit(
             notes.append(f"Auto-export failed ({exc})")
 
     handler.add_all()
-    
+
     commit_msg = options.message
-    version_tag = ""
-    
-    if getattr(options, "auto_version", False):
+    footer_version = ""
+
+    # Always-on smart footer (requested): append version+date without requiring tags.
+    if True:
         from datetime import datetime
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        count = handler.get_commit_count() + 1
-        version_tag = f"v1.0.{count}"
-        commit_msg = f"{commit_msg.strip()}\n\n[Version: {version_tag}] [Date: {now_str}]"
+
+        footer_version = handler.next_version_from_messages(major=1, minor=0)
+        footer_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        commit_msg = f"{commit_msg.strip()}\n\n[Version: {footer_version}] [Date: {footer_date}]"
 
     commit_hash = handler.commit(commit_msg)
     if not commit_hash:
         msg = "No changes to commit"
     else:
         msg = f"Committed: {commit_hash}"
-        if version_tag:
-            try:
-                handler.tag(version_tag, message="Auto-generated version tag")
-                msg += f" (Tagged as {version_tag})"
-            except Exception as e:
-                msg += f" (Failed to tag: {e})"
-                
+        if footer_version:
+            msg += f" ({footer_version})"
     if notes:
         msg = msg + "\n\n" + "\n".join(notes)
     return msg

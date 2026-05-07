@@ -3,12 +3,230 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import re
 
 
 def _wx():
     import wx  # type: ignore
 
     return wx
+
+
+def _commit_presets() -> list[tuple[str, str]]:
+    """
+    (label, commit_message)
+    Keep messages short; users can add details before committing.
+    """
+    return [
+        ("Select a preset…", ""),
+        ("PCB: routing changes", "PCB: routing changes"),
+        ("PCB: component placement", "PCB: component placement"),
+        ("PCB: power/ground tweaks", "PCB: power/ground tweaks"),
+        ("PCB: board outline/mechanics", "PCB: board outline/mechanics"),
+        ("PCB: silkscreen/labels", "PCB: silkscreen/labels"),
+        ("PCB: DRC fixes", "PCB: fix DRC violations"),
+        ("SCH: update schematic", "SCH: update schematic"),
+        ("SCH: netlist/annotation", "SCH: update annotation / net names"),
+        ("LIB: symbols/footprints", "LIB: update symbols/footprints"),
+        ("BOM: fields cleanup", "BOM: cleanup fields / refs"),
+        ("Exports: release package", "Exports: regenerate manufacturing outputs"),
+        ("Refactor: project cleanup", "Chore: project cleanup"),
+    ]
+
+
+def _has_stc() -> bool:
+    try:
+        import wx.stc  # type: ignore  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
+def _make_code_view(parent):
+    """
+    Creates a read-only code-like viewer.
+    Prefer StyledTextCtrl for coloring; fall back to TextCtrl.
+    """
+    wx = _wx()
+    if _has_stc():
+        import wx.stc as stc  # type: ignore
+
+        view = stc.StyledTextCtrl(parent, style=wx.BORDER_SUNKEN)
+        view.SetReadOnly(True)
+        view.SetWrapMode(stc.STC_WRAP_NONE)
+        view.SetUseHorizontalScrollBar(True)
+        view.SetUseVerticalScrollBar(True)
+        view.SetMarginWidth(0, 0)
+        view.SetMarginWidth(1, 0)
+        font = wx.Font(10, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+        view.StyleSetFont(stc.STC_STYLE_DEFAULT, font)
+        view.StyleSetBackground(stc.STC_STYLE_DEFAULT, "#1E1E1E")
+        view.StyleSetForeground(stc.STC_STYLE_DEFAULT, "#E6E6E6")
+        view.StyleClearAll()
+        return view
+
+    view = wx.TextCtrl(parent, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.BORDER_SUNKEN)
+    font = wx.Font(10, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+    view.SetFont(font)
+    return view
+
+
+def _set_text(view, text: str) -> None:
+    # Works for both TextCtrl and StyledTextCtrl
+    if hasattr(view, "SetReadOnly") and hasattr(view, "SetText"):
+        # StyledTextCtrl
+        view.SetReadOnly(False)
+        view.SetText(text)
+        view.SetReadOnly(True)
+        return
+    view.SetValue(text)
+
+
+def _style_timeline_graph(view, text: str) -> None:
+    if not _has_stc() or not hasattr(view, "StartStyling"):
+        return
+    import wx.stc as stc  # type: ignore
+
+    # Define small style palette
+    STYLE_DEFAULT = 0
+    STYLE_GRAPH = 1
+    STYLE_HASH = 2
+    STYLE_DECOR = 3
+
+    view.StyleSetForeground(STYLE_DEFAULT, "#E6E6E6")
+    view.StyleSetForeground(STYLE_GRAPH, "#9AA0A6")
+    view.StyleSetForeground(STYLE_HASH, "#4FC3F7")
+    view.StyleSetForeground(STYLE_DECOR, "#B39DDB")
+
+    view.StartStyling(0)
+
+    # Very lightweight styling: graph chars, hashes, decorations (...)
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch in "|/*\\\\_":
+            view.SetStyling(1, STYLE_GRAPH)
+            i += 1
+            continue
+        if re.match(r"[0-9a-f]", ch):
+            m = re.match(r"[0-9a-f]{7,40}", text[i:])
+            if m:
+                n = len(m.group(0))
+                view.SetStyling(n, STYLE_HASH)
+                i += n
+                continue
+        if ch == "(":
+            end = text.find(")", i)
+            if end != -1:
+                n = end - i + 1
+                view.SetStyling(n, STYLE_DECOR)
+                i += n
+                continue
+        view.SetStyling(1, STYLE_DEFAULT)
+        i += 1
+
+
+def _style_diff(view, text: str) -> None:
+    if not _has_stc() or not hasattr(view, "StartStyling"):
+        return
+    import wx.stc as stc  # type: ignore
+
+    STYLE_DEFAULT = 0
+    STYLE_ADD = 10
+    STYLE_DEL = 11
+    STYLE_HUNK = 12
+    STYLE_META = 13
+
+    view.StyleSetForeground(STYLE_DEFAULT, "#E6E6E6")
+    view.StyleSetForeground(STYLE_ADD, "#81C784")
+    view.StyleSetForeground(STYLE_DEL, "#E57373")
+    view.StyleSetForeground(STYLE_HUNK, "#B39DDB")
+    view.StyleSetForeground(STYLE_META, "#64B5F6")
+
+    view.StartStyling(0)
+    for line in text.splitlines(True):
+        style = STYLE_DEFAULT
+        if line.startswith("+++ ") or line.startswith("--- ") or line.startswith("diff ") or line.startswith("index "):
+            style = STYLE_META
+        elif line.startswith("@@"):
+            style = STYLE_HUNK
+        elif line.startswith("+") and not line.startswith("+++"):
+            style = STYLE_ADD
+        elif line.startswith("-") and not line.startswith("---"):
+            style = STYLE_DEL
+        view.SetStyling(len(line), style)
+
+
+def _style_summary(view, text: str) -> None:
+    if not _has_stc() or not hasattr(view, "StartStyling"):
+        return
+
+    STYLE_DEFAULT = 0
+    STYLE_HEADER = 14
+    STYLE_AUTHOR = 15
+    STYLE_DATE = 16
+    STYLE_STAT_FILE = 17
+    STYLE_STAT_ADD = 18
+    STYLE_STAT_DEL = 19
+
+    view.StyleSetForeground(STYLE_DEFAULT, "#E6E6E6")
+    view.StyleSetForeground(STYLE_HEADER, "#FFB74D")  # Orange
+    view.StyleSetForeground(STYLE_AUTHOR, "#4FC3F7")  # Light blue
+    view.StyleSetForeground(STYLE_DATE, "#9AA0A6")    # Grey
+    view.StyleSetForeground(STYLE_STAT_FILE, "#B39DDB") # Purple
+    view.StyleSetForeground(STYLE_STAT_ADD, "#81C784")  # Green
+    view.StyleSetForeground(STYLE_STAT_DEL, "#E57373")  # Red
+
+    view.StartStyling(0)
+    for line in text.splitlines(True):
+        if line.startswith("commit "):
+            view.SetStyling(len(line), STYLE_HEADER)
+        elif line.startswith("Author:"):
+            view.SetStyling(len(line), STYLE_AUTHOR)
+        elif line.startswith("Date:"):
+            view.SetStyling(len(line), STYLE_DATE)
+        elif line.startswith(" ") and "|" in line:
+            idx = line.find("|")
+            view.SetStyling(idx, STYLE_STAT_FILE)
+            view.SetStyling(1, STYLE_DEFAULT)
+            rest = line[idx+1:]
+            
+            plus_count = rest.count("+")
+            minus_count = rest.count("-")
+            
+            if plus_count > 0 or minus_count > 0:
+                first_sign = -1
+                for i, c in enumerate(rest):
+                    if c in "+-":
+                        first_sign = i
+                        break
+                view.SetStyling(first_sign, STYLE_DEFAULT)
+                
+                for c in rest[first_sign:]:
+                    if c == "+":
+                        view.SetStyling(1, STYLE_STAT_ADD)
+                    elif c == "-":
+                        view.SetStyling(1, STYLE_STAT_DEL)
+                    else:
+                        view.SetStyling(1, STYLE_DEFAULT)
+            else:
+                view.SetStyling(len(rest), STYLE_DEFAULT)
+        elif line.strip().startswith("[Version:"):
+            view.SetStyling(len(line), STYLE_HEADER)
+        else:
+            view.SetStyling(len(line), STYLE_DEFAULT)
+
+
+def _choice_dialog(parent, title: str, message: str, choices: list[str]) -> Optional[str]:
+    wx = _wx()
+    dlg = wx.SingleChoiceDialog(parent, message, title, choices)
+    try:
+        if dlg.ShowModal() != wx.ID_OK:
+            return None
+        return dlg.GetStringSelection() or None
+    finally:
+        dlg.Destroy()
 
 
 @dataclass(frozen=True)
@@ -24,7 +242,8 @@ class CommitOptions:
     export_images: bool
     export_step: bool
     export_glb: bool
-    auto_version: bool = False
+    # smart_footer is always on (no UI toggle)
+    smart_footer: bool = True
 
 
 class KiGitDialog:  # pragma: no cover (runs inside KiCad)
@@ -51,7 +270,11 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
     def _build_ui(self) -> None:
         wx = self._wx
 
-        self.notebook = wx.Notebook(self.dlg)
+        splitter = wx.SplitterWindow(self.dlg, style=wx.SP_LIVE_UPDATE)
+        top_pane = wx.Panel(splitter)
+        bottom_pane = wx.Panel(splitter)
+
+        self.notebook = wx.Notebook(top_pane)
 
         self.page_overview = wx.Panel(self.notebook)
         self.page_commit = wx.Panel(self.notebook)
@@ -65,8 +288,19 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.notebook.AddPage(self.page_timeline, "Timeline")
         self.notebook.AddPage(self.page_sync, "Sync")
 
-        self.log = wx.TextCtrl(self.dlg, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        self.log.SetMinSize((-1, 140))
+        self.log = wx.TextCtrl(bottom_pane, style=wx.TE_MULTILINE | wx.TE_READONLY)
+
+        top_sizer = wx.BoxSizer(wx.VERTICAL)
+        top_sizer.Add(self.notebook, 1, wx.EXPAND | wx.ALL, 4)
+        top_pane.SetSizer(top_sizer)
+
+        bottom_sizer = wx.BoxSizer(wx.VERTICAL)
+        bottom_sizer.Add(wx.StaticText(bottom_pane, label="Log"), 0, wx.LEFT | wx.RIGHT | wx.TOP, 4)
+        bottom_sizer.Add(self.log, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+        bottom_pane.SetSizer(bottom_sizer)
+
+        splitter.SetMinimumPaneSize(100)
+        splitter.SplitHorizontally(top_pane, bottom_pane, sashPosition=-150)
 
         btn_refresh = wx.Button(self.dlg, label="Refresh")
         btn_close = wx.Button(self.dlg, label="Close")
@@ -79,13 +313,11 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         btn_sizer.Add(btn_close, 0, wx.ALL, 6)
 
         root = wx.BoxSizer(wx.VERTICAL)
-        root.Add(self.notebook, 1, wx.EXPAND | wx.ALL, 8)
-        root.Add(wx.StaticText(self.dlg, label="Log"), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
-        root.Add(self.log, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        root.Add(splitter, 1, wx.EXPAND | wx.ALL, 4)
         root.Add(btn_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
         self.dlg.SetSizer(root)
-        self.dlg.SetMinSize((720, 520))
+        self.dlg.SetMinSize((720, 560))
 
         self._build_overview_tab()
         self._build_commit_tab()
@@ -174,8 +406,11 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.chk_drc = wx.CheckBox(self.page_commit, label="DRC guard (block commit if DRC violations exist)")
         self.chk_drc.SetValue(False)
 
-        self.chk_auto_version = wx.CheckBox(self.page_commit, label="Auto-version (append date, time & track version tag)")
-        self.chk_auto_version.SetValue(True)
+        # Smart footer is always enabled (no checkbox).
+
+        self.commit_presets = wx.Choice(self.page_commit, choices=[p[0] for p in _commit_presets()])
+        self.commit_presets.SetSelection(0)
+        self.commit_presets.Bind(wx.EVT_CHOICE, lambda evt: self._apply_preset())
 
         btn_export = wx.Button(self.page_commit, label="Export Now…")
         btn_commit = wx.Button(self.page_commit, label="Commit…")
@@ -193,13 +428,16 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
         info = wx.StaticText(
             self.page_commit,
-            label="Tip: `git-exports/` is intended to be committed (for reproducible snapshots).",
+            label="Tip: A footer like [Version: v1.0.N] [Date: YYYY-MM-DD HH:MM:SS] is appended automatically.",
         )
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(wx.StaticText(self.page_commit, label="Commit message"), 0, wx.ALL, 8)
+        preset_row = wx.BoxSizer(wx.HORIZONTAL)
+        preset_row.Add(wx.StaticText(self.page_commit, label="Presets"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        preset_row.Add(self.commit_presets, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        sizer.Add(preset_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 2)
         sizer.Add(self.commit_msg, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
-        sizer.Add(self.chk_auto_version, 0, wx.ALL, 8)
         sizer.Add(self.chk_export, 0, wx.ALL, 8)
         sizer.Add(exports_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(self.chk_drc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -282,12 +520,9 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         left = wx.Panel(splitter)
         right = wx.Panel(splitter)
 
-        mono = wx.Font(10, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
-
         # IMPORTANT: these controls must be parented to their splitter panes,
         # otherwise wx will lay them out as children of page_timeline and they will overlap.
-        self.graph_box = wx.TextCtrl(left, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        self.graph_box.SetFont(mono)
+        self.graph_box = _make_code_view(left)
 
         self.commits = wx.ListCtrl(left, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
         self.commits.InsertColumn(0, "Hash", width=80)
@@ -296,8 +531,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.commits.InsertColumn(3, "Message", width=520)
         self.commits.Bind(wx.EVT_LIST_ITEM_SELECTED, lambda evt: self._on_select_commit())
 
-        self.details = wx.TextCtrl(right, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        self.details.SetFont(mono)
+        self.details = _make_code_view(right)
 
         left_s = wx.BoxSizer(wx.VERTICAL)
         left_s.Add(wx.StaticText(left, label="Graph"), 0, wx.ALL, 6)
@@ -345,24 +579,11 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         btn_pull = wx.Button(self.page_sync, label="Pull (Fetch + Merge)")
         btn_push = wx.Button(self.page_sync, label="Push to Origin")
 
-        self.chk_push_tags = wx.CheckBox(self.page_sync, label="Push tags too")
-        self.chk_push_tags.SetValue(True)
-        
         btn_pull.Bind(wx.EVT_BUTTON, lambda evt: self._on_pull())
         btn_push.Bind(wx.EVT_BUTTON, lambda evt: self._on_push())
         
         sync_box.Add(btn_pull, 1, wx.ALL | wx.EXPAND, 6)
         sync_box.Add(btn_push, 1, wx.ALL | wx.EXPAND, 6)
-        sync_box.Add(self.chk_push_tags, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
-
-        # Tagging
-        tag_box = wx.StaticBoxSizer(wx.StaticBox(self.page_sync, label="Tags"), wx.HORIZONTAL)
-        
-        btn_tag = wx.Button(self.page_sync, label="Create Tag…")
-        btn_tag.Bind(wx.EVT_BUTTON, lambda evt: self._on_tag())
-        
-        tag_box.Add(wx.StaticText(self.page_sync, label="Create a new tag for the current commit (e.g., v1.0)"), 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
-        tag_box.Add(btn_tag, 0, wx.ALL, 6)
 
         info_text = (
             "Authentication / التحقق من الهوية:\n"
@@ -373,7 +594,6 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
         sizer.Add(remote_box, 0, wx.EXPAND | wx.ALL, 8)
         sizer.Add(sync_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        sizer.Add(tag_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.AddStretchSpacer(1)
         sizer.Add(wx.StaticText(self.page_sync, label=info_text), 0, wx.ALL, 8)
 
@@ -390,7 +610,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
     def refresh(self) -> None:
         wx = self._wx
-        self._log("Refreshing…")
+        self._log("---------------------Refreshing------------------")
 
         self.txt_project_dir.SetLabel(self.files.project_dir)
         self.txt_board.SetLabel(self.files.board_file or "(not found)")
@@ -470,6 +690,53 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             created = self.git.ensure_gitignore(template_text)
             self._log("Created .gitignore." if created else ".gitignore already exists.")
 
+        # Mandatory remote setup + connectivity check (first-time).
+        self.notebook.SetSelection(4)  # Sync tab index: Overview, Commit, Branches, Timeline, Sync
+        while True:
+            dlg = wx.TextEntryDialog(
+                self.dlg,
+                "Enter remote repository URL for 'origin' (SSH or HTTPS):",
+                "Set Remote URL",
+                self.txt_remote_url.GetValue() if hasattr(self, "txt_remote_url") else "",
+            )
+            try:
+                if dlg.ShowModal() != wx.ID_OK:
+                    wx.MessageBox(
+                        "Remote URL is required to complete setup. You can set it later in the Sync tab.",
+                        "KiGit",
+                        wx.OK | wx.ICON_WARNING,
+                    )
+                    break
+                remote_url = (dlg.GetValue() or "").strip()
+            finally:
+                dlg.Destroy()
+
+            if not remote_url:
+                wx.MessageBox("Remote URL cannot be empty.", "KiGit", wx.OK | wx.ICON_WARNING)
+                continue
+
+            try:
+                self.git.set_remote_url(remote_url)
+                self.txt_remote_url.SetValue(remote_url)
+            except Exception as exc:
+                wx.MessageBox(str(exc), "KiGit", wx.OK | wx.ICON_ERROR)
+                continue
+
+            # Connectivity check
+            try:
+                self._run_with_busy(lambda: self.git.check_remote("origin"), "Checking remote connectivity…")
+                self._log("Remote connectivity: OK")
+                break
+            except Exception as exc:
+                retry = wx.MessageBox(
+                    f"Remote connectivity check failed:\n\n{exc}\n\nRetry?",
+                    "KiGit",
+                    wx.YES_NO | wx.NO_DEFAULT | wx.ICON_ERROR,
+                )
+                if retry != wx.YES:
+                    self._log("Remote connectivity: FAILED (kept URL)")
+                    break
+
         self.refresh()
 
     def _collect_commit_options(self, *, force_export: Optional[bool] = None) -> CommitOptions:
@@ -485,7 +752,6 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         export_images = bool(self.chk_images.GetValue()) and auto_export
         export_step = bool(self.chk_step.GetValue()) and auto_export
         export_glb = bool(self.chk_glb.GetValue()) and auto_export
-        auto_version = bool(self.chk_auto_version.GetValue())
         return CommitOptions(
             message=msg,
             auto_export=auto_export,
@@ -498,8 +764,33 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             export_images=export_images,
             export_step=export_step,
             export_glb=export_glb,
-            auto_version=auto_version,
+            smart_footer=True,
         )
+
+    def _apply_preset(self) -> None:
+        idx = self.commit_presets.GetSelection()
+        if idx < 0:
+            return
+        presets = _commit_presets()
+        if idx >= len(presets):
+            return
+        preset_msg = presets[idx][1]
+        if not preset_msg:
+            return
+        current = self.commit_msg.GetValue() or ""
+        lines = current.splitlines()
+        if not lines:
+            new_text = preset_msg
+        else:
+            # Replace the first line (title) and keep any extra details the user wrote.
+            # If the user pasted a multi-line message, preserve everything after line 1.
+            tail = "\n".join(lines[1:]).lstrip("\n")
+            new_text = preset_msg if not tail else f"{preset_msg}\n{tail}"
+        self.commit_msg.SetValue(new_text)
+        try:
+            self.commit_msg.SetInsertionPointEnd()
+        except Exception:
+            pass
 
     def _run_with_busy(self, fn, label: str) -> None:
         wx = self._wx
@@ -630,23 +921,25 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
     def _refresh_timeline(self) -> None:
         if not self.git.is_git_repo():
-            self.graph_box.SetValue("(not a git repo)")
+            _set_text(self.graph_box, "(not a git repo)")
             self.commits.DeleteAllItems()
-            self.details.SetValue("")
+            _set_text(self.details, "")
             return
 
         all_branches = bool(self.chk_all_branches.GetValue())
         max_commits = int(self.spin_count.GetValue())
         try:
-            self.graph_box.SetValue(self.git.log_graph(max_count=max_commits, all_branches=all_branches))
+            graph = self.git.log_graph(max_count=max_commits, all_branches=all_branches)
+            _set_text(self.graph_box, graph)
+            _style_timeline_graph(self.graph_box, graph)
         except Exception as exc:
-            self.graph_box.SetValue(f"(log error) {exc}")
+            _set_text(self.graph_box, f"(log error) {exc}")
 
         self.commits.DeleteAllItems()
         try:
             tsv = self.git.log_commits_tsv(max_count=max_commits, all_branches=all_branches)
         except Exception as exc:
-            self.details.SetValue(f"(log error) {exc}")
+            _set_text(self.details, f"(log error) {exc}")
             return
 
         for row in tsv.splitlines():
@@ -661,6 +954,25 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             if decorations.strip():
                 msg = f"{subject} {decorations.strip()}"
             self.commits.SetItem(idx, 3, msg)
+            # Row coloring heuristic
+            lower = subject.lower()
+            color = None
+            if lower.startswith("feat:"):
+                color = "#81C784"
+            elif lower.startswith("fix:"):
+                color = "#E57373"
+            elif lower.startswith("chore:") or lower.startswith("refactor:"):
+                color = "#B0BEC5"
+            elif lower.startswith("pcb:"):
+                color = "#64B5F6"
+            elif lower.startswith("sch:"):
+                color = "#4DB6AC"
+            elif lower.startswith("exports:"):
+                color = "#FFB74D"
+            if color:
+                item = self.commits.GetItem(idx)
+                item.SetTextColour(color)
+                self.commits.SetItem(item)
 
         if self.commits.GetItemCount() > 0 and self.commits.GetFirstSelected() == -1:
             self.commits.Select(0)
@@ -675,12 +987,14 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
     def _on_select_commit(self) -> None:
         rev = self._selected_hash()
         if not rev:
-            self.details.SetValue("")
+            _set_text(self.details, "")
             return
         try:
-            self.details.SetValue(self.git.show_summary(rev))
+            summary = self.git.show_summary(rev)
+            _set_text(self.details, summary)
+            _style_summary(self.details, summary)
         except Exception as exc:
-            self.details.SetValue(f"(show error) {exc}")
+            _set_text(self.details, f"(show error) {exc}")
 
     def _show_diff_to_parent(self) -> None:
         wx = self._wx
@@ -694,7 +1008,9 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             wx.MessageBox(str(exc), "KiGit", wx.OK | wx.ICON_ERROR)
             return
         # Show diff in-place (can be big).
-        self.details.SetValue(diff_text or "(no diff)")
+        diff = diff_text or "(no diff)"
+        _set_text(self.details, diff)
+        _style_diff(self.details, diff)
 
     def _copy_selected_hash(self) -> None:
         wx = self._wx
@@ -728,6 +1044,15 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         try:
             self.git.set_remote_url(new_url)
             self._log(f"Remote URL set to: {new_url}")
+            try:
+                self._run_with_busy(lambda: self.git.check_remote("origin"), "Checking remote connectivity…")
+                self._log("Remote connectivity: OK")
+            except Exception as exc:
+                wx.MessageBox(
+                    f"Remote connectivity check failed:\n\n{exc}",
+                    "KiGit",
+                    wx.OK | wx.ICON_ERROR,
+                )
             self.refresh()
         except Exception as exc:
             wx.MessageBox(str(exc), "KiGit", wx.OK | wx.ICON_ERROR)
@@ -751,14 +1076,43 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         if resp != wx.YES:
             return
 
-        def work():
-            out = self.git.push(include_tags=bool(self.chk_push_tags.GetValue()))
-            self._log(f"Push successful:\n{out}")
-
         try:
+            out_holder: dict[str, str] = {"out": ""}
+
+            def work():
+                out_holder["out"] = self.git.push(include_tags=False)
+
             self._run_with_busy(work, "Pushing to remote…")
+            self._log(f"Push successful:\n{out_holder['out']}")
+            wx.MessageBox("Push completed successfully.", "KiGit", wx.OK | wx.ICON_INFORMATION)
             self.refresh()
         except Exception as exc:
+            err = str(exc)
+            # Non-fast-forward is very common: offer guided resolution.
+            if ("non-fast-forward" in err) or ("fetch first" in err) or ("rejected" in err and "fast-forward" in err):
+                choice = _choice_dialog(
+                    self.dlg,
+                    "Push rejected",
+                    "Remote has new commits. Choose how to proceed:",
+                    [
+                        "Pull (rebase), then push",
+                        "Pull (merge), then push",
+                        "Cancel",
+                    ],
+                )
+                if choice and choice != "Cancel":
+                    try:
+                        if choice.startswith("Pull (rebase)"):
+                            self._run_with_busy(lambda: self.git.pull_rebase(), "Pulling (rebase)…")
+                        else:
+                            self._run_with_busy(lambda: self.git.pull_merge(), "Pulling (merge)…")
+                        self._run_with_busy(lambda: self.git.push(include_tags=False), "Pushing…")
+                        wx.MessageBox("Sync completed successfully.", "KiGit", wx.OK | wx.ICON_INFORMATION)
+                        self.refresh()
+                        return
+                    except Exception as exc2:
+                        wx.MessageBox(f"Sync failed:\n{exc2}", "KiGit Error", wx.OK | wx.ICON_ERROR)
+                        return
             wx.MessageBox(f"Push failed:\n{exc}", "KiGit Error", wx.OK | wx.ICON_ERROR)
 
     def _on_pull(self) -> None:
@@ -780,47 +1134,109 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         if resp != wx.YES:
             return
 
-        def work():
-            out = self.git.pull()
-            self._log(f"Pull successful:\n{out}")
-
-        try:
-            self._run_with_busy(work, "Pulling from remote…")
-            self.refresh()
-        except Exception as exc:
-            wx.MessageBox(f"Pull failed:\n{exc}", "KiGit Error", wx.OK | wx.ICON_ERROR)
-
-    def _on_tag(self) -> None:
-        wx = self._wx
-        if not self.git.is_git_repo():
-            wx.MessageBox("Initialize a Git repo first.", "KiGit", wx.OK | wx.ICON_WARNING)
-            return
-
-        dlg = wx.TextEntryDialog(self.dlg, "Enter tag name (e.g. v1.0.0):", "Create Tag")
-        try:
-            if dlg.ShowModal() != wx.ID_OK:
-                return
-            tag_name = dlg.GetValue().strip()
-        finally:
-            dlg.Destroy()
-
-        if not tag_name:
-            return
-
-        try:
-            # Lightweight tag is OK, but make sure Push can include tags.
-            self.git.tag(tag_name)
-            self._log(f"Created tag: {tag_name}")
-            self.refresh()
-
-            resp = wx.MessageBox(
-                f"Push tag '{tag_name}' now?",
-                "KiGit",
-                wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+        # Special case: repo has no commits yet, but local project files exist.
+        # Pulling from a non-empty remote requires checking out remote branch, which can overwrite untracked files.
+        if not self.git.has_commits() and self.git.has_untracked_files():
+            untracked = self.git.list_untracked_paths()
+            msg = (
+                "This repo has no local commits yet, but there are local untracked files.\n\n"
+                "Pulling from the remote will replace files in this folder.\n\n"
+                "Do you want KiGit to BACK UP your local files to .kigit-backups/ and then pull?"
             )
-            if resp == wx.YES:
-                out = self.git.push(include_tags=True)
-                self._log(f"Pushed tags:\n{out}")
-                self.refresh()
+            resp2 = wx.MessageBox(msg, "KiGit", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
+            if resp2 != wx.YES:
+                return
+
+            from datetime import datetime
+            from pathlib import Path
+
+            backup_dir = Path(self.files.project_dir) / ".kigit-backups" / f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            try:
+                moved = self.git.backup_paths(untracked, str(backup_dir))
+                self._log(f"Backed up {len(moved)} files to: {backup_dir}")
+            except Exception as exc:
+                wx.MessageBox(f"Backup failed:\n{exc}", "KiGit", wx.OK | wx.ICON_ERROR)
+                return
+
+        def work_pull() -> str:
+            return self.git.pull()
+
+        try:
+            out_holder: dict[str, str] = {"out": ""}
+
+            def work():
+                out_holder["out"] = work_pull()
+
+            self._run_with_busy(work, "Pulling from remote…")
+            self._log(f"Pull successful:\n{out_holder['out']}")
+            wx.MessageBox("Pull completed successfully.", "KiGit", wx.OK | wx.ICON_INFORMATION)
+            self.refresh()
         except Exception as exc:
-            wx.MessageBox(str(exc), "KiGit Error", wx.OK | wx.ICON_ERROR)
+            err = str(exc)
+            # Handle untracked overwrite case with a backup option (even for non-empty repos).
+            if "untracked working tree files would be overwritten" in err.lower():
+                untracked = self.git.list_untracked_paths()
+                msg = (
+                    "Git refused to pull because local untracked files would be overwritten.\n\n"
+                    "Do you want KiGit to back them up into .kigit-backups/ and retry?"
+                )
+                resp2 = wx.MessageBox(msg, "KiGit", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
+                if resp2 == wx.YES:
+                    from datetime import datetime
+                    from pathlib import Path
+
+                    backup_dir = Path(self.files.project_dir) / ".kigit-backups" / f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                    try:
+                        moved = self.git.backup_paths(untracked, str(backup_dir))
+                        self._log(f"Backed up {len(moved)} files to: {backup_dir}")
+                        out_holder2: dict[str, str] = {"out": ""}
+
+                        def work2():
+                            out_holder2["out"] = work_pull()
+
+                        self._run_with_busy(work2, "Pulling from remote…")
+                        self._log(f"Pull successful:\n{out_holder2['out']}")
+                        wx.MessageBox("Pull completed successfully.", "KiGit", wx.OK | wx.ICON_INFORMATION)
+                        self.refresh()
+                        return
+                    except Exception as exc2:
+                        wx.MessageBox(f"Backup/pull failed:\n{exc2}", "KiGit Error", wx.OK | wx.ICON_ERROR)
+                        return
+
+            # Offer strategy choices when ff-only fails or conflicts happen.
+            choice = _choice_dialog(
+                self.dlg,
+                "Pull failed",
+                "Choose a safe resolution strategy:",
+                [
+                    "Retry pull (rebase)",
+                    "Retry pull (merge)",
+                    "Cancel",
+                ],
+            )
+            if choice and choice != "Cancel":
+                try:
+                    if "rebase" in choice:
+                        out_holder3: dict[str, str] = {"out": ""}
+
+                        def work3():
+                            out_holder3["out"] = self.git.pull_rebase()
+
+                        self._run_with_busy(work3, "Pulling (rebase)…")
+                        self._log(f"Pull successful:\n{out_holder3['out']}")
+                    else:
+                        out_holder4: dict[str, str] = {"out": ""}
+
+                        def work4():
+                            out_holder4["out"] = self.git.pull_merge()
+
+                        self._run_with_busy(work4, "Pulling (merge)…")
+                        self._log(f"Pull successful:\n{out_holder4['out']}")
+                    wx.MessageBox("Pull completed successfully.", "KiGit", wx.OK | wx.ICON_INFORMATION)
+                    self.refresh()
+                    return
+                except Exception as exc2:
+                    wx.MessageBox(f"Pull failed:\n{exc2}", "KiGit Error", wx.OK | wx.ICON_ERROR)
+                    return
+
+            wx.MessageBox(f"Pull failed:\n{exc}", "KiGit Error", wx.OK | wx.ICON_ERROR)

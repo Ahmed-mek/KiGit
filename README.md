@@ -1,6 +1,6 @@
-# KiGit (KiCad Plugin) — repo scaffold
+# KiGit — KiCad Git workflow plugin
 
-This repository is currently a **scaffold** for a KiCad Python plugin (SWIG `pcbnew.ActionPlugin`) that integrates Git workflows and (optionally) `kicad-cli` automation.
+KiGit is a KiCad Python plugin (SWIG `pcbnew.ActionPlugin`) that integrates Git workflows and `kicad-cli` automation to make hardware projects feel closer to modern software development.
 
 ## What’s included right now
 
@@ -39,7 +39,7 @@ bash scripts/install_kicad_dev_link.sh
 ```
 
 This creates a dev entry under:
-`~/.local/share/kicad/10.0/3rdparty/plugins/com_github_ahmedmikatonikpc_kigit_dev`
+`~/.local/share/kicad/10.0/3rdparty/plugins/com_github_ahmed_mek_kigit_dev`
 
 ## Install in KiCad (manual, for SWIG action plugins)
 
@@ -50,6 +50,6 @@ Copy the *contents* of the ZIP’s `plugins/` directory into your KiCad scriptin
 - The plugin keeps UI thin and puts logic in helper modules (easier to test).
 - Git operations use the system `git` CLI via `subprocess` (no GitPython dependency).
 - `kicad-cli` integration is optional and fails gracefully when missing.
- - Auto-export writes all artifacts to `git-exports/` under the project directory.
+- Auto-export writes all artifacts to `git-exports/` under the project directory.
 
 # KiGit

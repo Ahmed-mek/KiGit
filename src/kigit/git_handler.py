@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -116,8 +118,41 @@ class GitHandler:
         return res.stdout.strip()
 
     def current_branch(self) -> str:
-        res = self._run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=self._repo_cwd())
-        return res.stdout.strip()
+        # `rev-parse --abbrev-ref HEAD` returns "HEAD" when detached; avoid using that for operations.
+        try:
+            res = self._run(["symbolic-ref", "--short", "HEAD"], cwd=self._repo_cwd())
+            return res.stdout.strip()
+        except GitError:
+            res = self._run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=self._repo_cwd())
+            return res.stdout.strip()
+
+    def has_commits(self) -> bool:
+        try:
+            self._run(["rev-parse", "--verify", "HEAD"], cwd=self._repo_cwd())
+            return True
+        except GitError:
+            return False
+
+    def remote_default_branch(self, remote_name: str = "origin") -> str:
+        """
+        Returns the default branch name for the remote, e.g. "main".
+        Requires the remote refs to be fetched.
+        """
+        try:
+            res = self._run(["rev-parse", "--abbrev-ref", f"{remote_name}/HEAD"], cwd=self._repo_cwd())
+            val = res.stdout.strip()
+            if "/" in val:
+                return val.split("/", 1)[1]
+        except GitError:
+            pass
+        # Fallback heuristics.
+        for candidate in ("main", "master"):
+            try:
+                self._run(["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_name}/{candidate}"], cwd=self._repo_cwd())
+                return candidate
+            except GitError:
+                continue
+        return "main"
 
     def list_branches(self) -> list[str]:
         res = self._run(["branch", "--format=%(refname:short)"], cwd=self._repo_cwd())
@@ -144,12 +179,30 @@ class GitHandler:
         res = self._run(args, cwd=self._repo_cwd())
         return res.stdout
 
-    def get_commit_count(self) -> int:
+    def next_version_from_messages(self, *, major: int = 1, minor: int = 0, search_limit: int = 500) -> str:
+        """
+        Derive the next version from previous commit messages, looking for:
+          [Version: v<major>.<minor>.<patch>]
+
+        This avoids relying on git tags (which users may not want to create/push).
+        """
+        pattern = re.compile(rf"\\[Version:\\s*v{major}\\.{minor}\\.(\\d+)\\]")
         try:
-            res = self._run(["rev-list", "--count", "HEAD"], cwd=self._repo_cwd())
-            return int(res.stdout.strip())
+            res = self._run(
+                ["log", f"-n{search_limit}", "--pretty=format:%B%n----END----"],
+                cwd=self._repo_cwd(),
+            )
+            text = res.stdout
         except GitError:
-            return 0
+            text = ""
+
+        max_patch = 0
+        for m in pattern.finditer(text):
+            try:
+                max_patch = max(max_patch, int(m.group(1)))
+            except Exception:
+                continue
+        return f"v{major}.{minor}.{max_patch + 1}"
 
     def show_summary(self, rev: str) -> str:
         res = self._run(["show", "--no-patch", "--stat", "--decorate", rev], cwd=self._repo_cwd())
@@ -210,30 +263,167 @@ class GitHandler:
         else:
             self._run(["remote", "add", remote_name, url], cwd=self._repo_cwd())
 
+    def check_remote(self, remote: str = "origin") -> str:
+        """
+        Verifies the remote is reachable by listing heads.
+        Returns stdout (may be empty for an empty repo).
+        """
+        res = self._run(["ls-remote", "--heads", remote], cwd=self._repo_cwd())
+        return res.stdout
+
+    def has_untracked_files(self) -> bool:
+        return bool(self.list_untracked_paths())
+
+    def list_untracked_paths(self) -> list[str]:
+        """
+        Returns repo-relative untracked paths.
+
+        Uses `git status --porcelain=v1 -z` to avoid quoted paths (e.g. filenames with spaces).
+        """
+        res = self._run(["status", "--porcelain=v1", "-z"], cwd=self._repo_cwd())
+        data = res.stdout or ""
+        out: list[str] = []
+        for rec in data.split("\x00"):
+            if not rec:
+                continue
+            if rec.startswith("?? "):
+                out.append(rec[3:])
+        return out
+
+    def backup_paths(self, rel_paths: list[str], backup_dir: str) -> list[str]:
+        """
+        Moves the given repo-relative paths into backup_dir, preserving structure.
+        Returns the list of moved paths.
+        """
+        moved: list[str] = []
+        root = Path(self._repo_cwd())
+        bdir = Path(backup_dir).resolve()
+        bdir.mkdir(parents=True, exist_ok=True)
+
+        for rel in rel_paths:
+            rel = (rel or "").strip()
+            if not rel or rel.startswith(".git/") or rel == ".git":
+                continue
+            src = root / rel
+            if not src.exists():
+                continue
+            # Never move the backup directory into itself.
+            try:
+                src_resolved = src.resolve()
+                bdir_str = str(bdir)
+                src_str = str(src_resolved)
+                # Skip moving the backup dir itself or its contents.
+                if src_resolved == bdir or src_str.startswith(bdir_str + os.sep):
+                    continue
+                # Also skip moving a directory that CONTAINS the backup directory (parent into child).
+                if bdir_str.startswith(src_str + os.sep):
+                    continue
+            except Exception:
+                pass
+            dest = bdir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+            moved.append(rel)
+        return moved
+
+    def remote_has_branches(self, remote_name: str = "origin") -> bool:
+        try:
+            self.fetch(remote_name)
+        except GitError:
+            return False
+        # `show-ref` on refs/remotes/origin/*
+        try:
+            res = self._run(["show-ref", "--heads", "--quiet", f"refs/remotes/{remote_name}"], cwd=self._repo_cwd())
+            _ = res
+        except GitError:
+            # Fallback by listing branches.
+            try:
+                res2 = self._run(["branch", "-r", "--format=%(refname:short)"], cwd=self._repo_cwd())
+                return any(line.strip().startswith(f"{remote_name}/") and line.strip() != f"{remote_name}/HEAD" for line in res2.stdout.splitlines())
+            except GitError:
+                return False
+        return True
+
+    def fetch(self, remote_name: str = "origin") -> str:
+        res = self._run(["fetch", "--prune", remote_name], cwd=self._repo_cwd())
+        # Best-effort: update origin/HEAD to track remote default branch.
+        try:
+            self._run(["remote", "set-head", remote_name, "--auto"], cwd=self._repo_cwd())
+        except GitError:
+            pass
+        return res.stdout + res.stderr
+
+    def remote_branches(self, remote_name: str = "origin") -> list[str]:
+        res = self._run(["branch", "-r", "--format=%(refname:short)"], cwd=self._repo_cwd())
+        out: list[str] = []
+        prefix = f"{remote_name}/"
+        for line in res.stdout.splitlines():
+            name = line.strip()
+            if not name.startswith(prefix):
+                continue
+            if name == f"{remote_name}/HEAD":
+                continue
+            out.append(name[len(prefix) :])
+        return out
+
     def push(self, remote_name: str = "origin", branch: Optional[str] = None, *, include_tags: bool = False) -> str:
         if not branch:
             branch = self.current_branch()
-        args = ["push"]
+        args = ["push", "-u"]
         if include_tags:
-            # Note: plain `git push origin <branch>` does NOT push tags.
-            # `--tags` pushes lightweight + annotated tags.
-            args.append("--tags")
+            # Push annotated tags that are reachable from commits being pushed.
+            # This avoids pushing unrelated/local-only tags.
+            args.append("--follow-tags")
         args += [remote_name, branch]
         res = self._run(args, cwd=self._repo_cwd())
         return res.stdout + res.stderr
 
     def pull(self, remote_name: str = "origin", branch: Optional[str] = None) -> str:
+        # If repo has no commits yet, we need to bootstrap the working tree from the remote.
+        if not self.has_commits():
+            out = []
+            out.append(self.fetch(remote_name))
+            branches = self.remote_branches(remote_name)
+            if not branches:
+                raise GitError(
+                    "Remote has no branches yet. Create the first commit locally and push, or initialize the remote with a README."
+                )
+            default_branch = branch or self.remote_default_branch(remote_name)
+            if default_branch not in branches:
+                default_branch = branches[0]
+            # Create local branch tracking the remote branch.
+            self._run(["checkout", "-B", default_branch, "--track", f"{remote_name}/{default_branch}"], cwd=self._repo_cwd())
+            out.append(self._run(["pull"], cwd=self._repo_cwd()).stdout)
+            return "\n".join([x for x in out if x]).strip()
+
         if not branch:
             branch = self.current_branch()
+            
+        try:
+            self._run(["branch", f"--set-upstream-to={remote_name}/{branch}", branch], cwd=self._repo_cwd())
+        except GitError:
+            pass
+
+        # Normal pull: merge remote branch into local branch
         res = self._run(["pull", remote_name, branch], cwd=self._repo_cwd())
         return res.stdout + res.stderr
 
-    def tag(self, tag_name: str, message: str = "") -> None:
-        tag_name = tag_name.strip()
-        if not tag_name:
-            raise GitError("Tag name cannot be empty")
-        args = ["tag", tag_name]
-        if message:
-            # Message implies an annotated tag.
-            args = ["tag", "-a", tag_name, "-m", message]
-        self._run(args, cwd=self._repo_cwd())
+    def pull_merge(self, remote_name: str = "origin", branch: Optional[str] = None) -> str:
+        """
+        Pull allowing merge commits (no ff-only).
+        """
+        if branch:
+            res = self._run(["pull", remote_name, branch], cwd=self._repo_cwd())
+        else:
+            res = self._run(["pull"], cwd=self._repo_cwd())
+        return res.stdout + res.stderr
+
+    def pull_rebase(self, remote_name: str = "origin", branch: Optional[str] = None) -> str:
+        """
+        Pull using rebase to avoid merge commits.
+        """
+        if branch:
+            res = self._run(["pull", "--rebase", remote_name, branch], cwd=self._repo_cwd())
+        else:
+            res = self._run(["pull", "--rebase"], cwd=self._repo_cwd())
+        return res.stdout + res.stderr
