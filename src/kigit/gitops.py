@@ -26,7 +26,8 @@ def smart_commit(
       - git add + commit
     """
     notes: list[str] = []
-    revision = handler.next_revision()
+    create_tag = bool(getattr(options, "create_version_tag", False))
+    revision = handler.next_revision(create_tag=create_tag)
 
     schematic_backup: Optional[str] = None
     schematic_rev_changed = False
@@ -112,7 +113,7 @@ def smart_commit(
         commit_msg = options.message
         footer_revision = ""
 
-        # Always-on smart footer: append revision+date, and create a matching git tag.
+        # Always-on smart footer: append revision+date. Optionally create a matching tag.
         if True:
             from datetime import datetime
 
@@ -126,11 +127,12 @@ def smart_commit(
         else:
             msg = f"Committed: {commit_hash}"
             if footer_revision:
-                try:
-                    handler.create_annotated_tag(footer_revision, message=f"KiGit {footer_revision}")
-                    notes.append(f"Tag created: {footer_revision}")
-                except Exception as exc:
-                    notes.append(f"Tag skipped ({exc})")
+                if create_tag:
+                    try:
+                        handler.create_annotated_tag(footer_revision, message=f"KiGit {footer_revision}")
+                        notes.append(f"Tag created: {footer_revision}")
+                    except Exception as exc:
+                        notes.append(f"Tag skipped ({exc})")
                 msg += f" ({footer_revision})"
                 # Persist last committed revision for stable export-only runs.
                 try:

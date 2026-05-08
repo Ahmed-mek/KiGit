@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
+import re
 
 
 class GitError(RuntimeError):
@@ -201,12 +202,66 @@ class GitHandler:
         except Exception:
             return 0
 
-    def next_revision(self) -> str:
+    _MAJOR_TAG_RE = re.compile(r"^V(\d+)\.0$")
+
+    def _list_major_tags(self) -> list[tuple[int, str]]:
         """
-        Hardware-style revision: REV-<N>, derived from commit count.
-        If repo has 14 commits, next revision is REV-15.
+        Returns parsed major tags as (major, tag_name) for tags matching V<major>.0.
         """
-        return f"REV-{self.commit_count() + 1}"
+        try:
+            res = self._run(["tag", "--list", "V*.0"], cwd=self._repo_cwd())
+            tags = [t.strip() for t in (res.stdout or "").splitlines() if t.strip()]
+        except GitError:
+            tags = []
+
+        out: list[tuple[int, str]] = []
+        for t in tags:
+            m = self._MAJOR_TAG_RE.match(t)
+            if not m:
+                continue
+            try:
+                out.append((int(m.group(1)), t))
+            except Exception:
+                continue
+        return out
+
+    def latest_major_tag(self) -> Optional[tuple[int, str]]:
+        """
+        Picks the highest major tag matching V<major>.0.
+        """
+        tags = self._list_major_tags()
+        if not tags:
+            return None
+        return max(tags, key=lambda x: x[0])
+
+    def commits_since(self, rev: str) -> int:
+        if not self.has_commits():
+            return 0
+        try:
+            res = self._run(["rev-list", "--count", f"{rev}..HEAD"], cwd=self._repo_cwd())
+            return int((res.stdout or "").strip() or "0")
+        except Exception:
+            return 0
+
+    def next_revision(self, *, create_tag: bool = False) -> str:
+        """
+        Revision scheme:
+        - Major tags are only: V<k>.0
+        - If create_tag=False: V{k}.{n+1}, where n is commits since V<k>.0
+        - If create_tag=True:  V{k+1}.0 (major bump tag), minor resets to 0.
+        """
+        latest = self.latest_major_tag()
+        base_major = latest[0] if latest else 0
+        base_tag = latest[1] if latest else None
+
+        if create_tag:
+            return f"V{base_major + 1}.0"
+
+        if base_tag:
+            minor = self.commits_since(base_tag) + 1
+        else:
+            minor = self.commit_count() + 1
+        return f"V{base_major}.{minor}"
 
     def tag_exists(self, name: str) -> bool:
         name = (name or "").strip()

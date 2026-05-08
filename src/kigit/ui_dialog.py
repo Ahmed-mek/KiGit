@@ -234,6 +234,7 @@ class CommitOptions:
     message: str
     auto_export: bool
     run_drc_guard: bool
+    create_version_tag: bool
     export_pdf: bool
     export_bom: bool
     export_layers_svg: bool
@@ -453,6 +454,10 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         self.chk_drc.SetValue(False)
         self.chk_drc.Bind(wx.EVT_CHECKBOX, lambda evt: self._persist_export_settings())
 
+        self.chk_tag = wx.CheckBox(self.page_commit, label="Create version tag (major bump to V{k+1}.0)")
+        self.chk_tag.SetValue(False)
+        self.chk_tag.Bind(wx.EVT_CHECKBOX, lambda evt: (self._persist_export_settings(), self._refresh_revision_preview()))
+
         for chk in (
             self.chk_pdf,
             self.chk_bom,
@@ -487,8 +492,14 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
         info = wx.StaticText(
             self.page_commit,
-            label="Tip: A footer like [Revision: REV-N] [Date: YYYY-MM-DD HH:MM:SS] is appended automatically, and a matching Git tag is created.",
+            label="Tip: A footer like [Revision: V{k}.{n}] [Date: YYYY-MM-DD HH:MM:SS] is appended automatically. Enable tagging to create V{k+1}.0 and reset minor to 0.",
         )
+
+        preview_box = wx.StaticBoxSizer(wx.StaticBox(self.page_commit, label="Revision preview"), wx.VERTICAL)
+        self.txt_next_rev = wx.StaticText(self.page_commit, label="Next revision: (calculating…)")
+        self.txt_next_tag = wx.StaticText(self.page_commit, label="Tag to create: (none)")
+        preview_box.Add(self.txt_next_rev, 0, wx.ALL, 4)
+        preview_box.Add(self.txt_next_tag, 0, wx.ALL, 4)
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(wx.StaticText(self.page_commit, label="Commit message"), 0, wx.ALL, 8)
@@ -500,11 +511,14 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         sizer.Add(self.chk_export, 0, wx.ALL, 8)
         sizer.Add(exports_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(self.chk_drc, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        sizer.Add(self.chk_tag, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        sizer.Add(preview_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(info, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         sizer.Add(btns, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         self.page_commit.SetSizer(sizer)
         self._load_export_settings()
         self._sync_export_enable()
+        self._refresh_revision_preview()
 
     def _sync_export_enable(self) -> None:
         enabled = bool(self.chk_export.GetValue())
@@ -552,6 +566,8 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
 
         apply_bool("auto_export", self.chk_export)
         apply_bool("run_drc_guard", self.chk_drc)
+        if hasattr(self, "chk_tag"):
+            apply_bool("create_version_tag", self.chk_tag)
         apply_bool("export_pdf", self.chk_pdf)
         apply_bool("export_bom", self.chk_bom)
         apply_bool("export_layers_svg", self.chk_layers_svg)
@@ -569,6 +585,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
                 {
                     "auto_export": bool(self.chk_export.GetValue()),
                     "run_drc_guard": bool(self.chk_drc.GetValue()),
+                    "create_version_tag": bool(self.chk_tag.GetValue()) if hasattr(self, "chk_tag") else False,
                     "export_pdf": bool(self.chk_pdf.GetValue()),
                     "export_bom": bool(self.chk_bom.GetValue()),
                     "export_layers_svg": bool(self.chk_layers_svg.GetValue()),
@@ -597,6 +614,19 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             self.settings.save(self.files.project_dir)
         except Exception:
             pass
+
+    def _refresh_revision_preview(self) -> None:
+        if not hasattr(self, "txt_next_rev") or not hasattr(self, "txt_next_tag"):
+            return
+        try:
+            create_tag = bool(self.chk_tag.GetValue()) if hasattr(self, "chk_tag") else False
+            next_rev = self.git.next_revision(create_tag=create_tag) if self.git.is_git_repo() else "V0.1"
+            next_tag = next_rev if create_tag else "(none)"
+            self.txt_next_rev.SetLabel(f"Next revision: {next_rev}")
+            self.txt_next_tag.SetLabel(f"Tag to create: {next_tag}")
+        except Exception as exc:
+            self.txt_next_rev.SetLabel(f"Next revision: (error) {exc}")
+            self.txt_next_tag.SetLabel("Tag to create: (unknown)")
 
     def _build_branches_tab(self) -> None:
         wx = self._wx
@@ -773,7 +803,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
         sync_box.Add(btn_push, 1, wx.ALL | wx.EXPAND, 6)
 
         info_text = (
-            "Authentication / التحقق من الهوية:\n"
+            "Authentication:\n"
             "KiGit uses your system's Git credentials.\n"
             "If using HTTPS, ensure a Git Credential Manager is installed.\n"
             "If using SSH (git@github.com:...), ensure your SSH keys are set up."
@@ -959,6 +989,7 @@ class KiGitDialog:  # pragma: no cover (runs inside KiCad)
             message=msg,
             auto_export=auto_export,
             run_drc_guard=bool(self.chk_drc.GetValue()),
+            create_version_tag=bool(self.chk_tag.GetValue()) if hasattr(self, "chk_tag") else False,
             export_pdf=export_pdf,
             export_bom=export_bom,
             export_layers_svg=export_layers_svg,
