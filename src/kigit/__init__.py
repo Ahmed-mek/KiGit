@@ -6,9 +6,7 @@ __all__ = []
 # Keep import-time side effects safe: only register when running inside KiCad.
 try:
     import pcbnew  # type: ignore
-
-    pgm = getattr(pcbnew, "PgmOrNull", None)
-    in_kicad = bool(pgm and pgm() is not None)
+    in_kicad = True
 except Exception:
     in_kicad = False
 

@@ -8,9 +8,7 @@ from pathlib import Path
 def _in_kicad() -> bool:
     try:
         import pcbnew  # type: ignore
-
-        pgm = getattr(pcbnew, "PgmOrNull", None)
-        return bool(pgm and pgm() is not None)
+        return True
     except Exception:
         return False
 
